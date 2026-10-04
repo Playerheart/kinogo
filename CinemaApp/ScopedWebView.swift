@@ -26,7 +26,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v2",
+            forIdentifier: "ScopedBlock_v3",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -35,19 +35,20 @@ struct ScopedWebView: UIViewRepresentable {
         let js = """
         (function() {
             var HIDE_ID = '__scoped_hide__';
-            if (!document.getElementById(HIDE_ID)) {
+
+            function ensureStyle() {
+                if (document.getElementById(HIDE_ID)) return;
                 var style = document.createElement('style');
                 style.id = HIDE_ID;
                 style.innerHTML = `
                     header, nav, footer,
                     .header, .footer, .nav, .top-menu, .main-menu,
-                    .sidebar, .side, .left-side, .right-side, aside,
+                    .sidebar, .left-side, .right-side, aside,
                     #header, #footer, #nav, #sidebar,
-                    .comments, #comments, .related, .related-movies, .sect-related,
+                    .comments, #comments,
                     .social, .share, .breadcrumbs, .breadcrumb,
-                    .nav-chain, .nav-links, .top-tabs, .pagination,
-                    .footer-menu, .top-nav, .rate-buttons, .movie-rating-buttons,
                     .yellow-banner, [class*="yellow-banner"],
+                    [class*="pinco" i], [class*="kysh" i],
                     [data-adblock-hidden="1"] {
                         display: none !important;
                         visibility: hidden !important;
@@ -65,7 +66,7 @@ struct ScopedWebView: UIViewRepresentable {
                     body * { max-width: 100% !important; }
                     .content, .main, .page, .wrapper, .container,
                     #content, #main, .content-wrapper, .main-content {
-                        padding: 8px !important;
+                        padding: 6px !important;
                         margin: 0 !important;
                         max-width: 100% !important;
                         width: 100% !important;
@@ -103,34 +104,33 @@ struct ScopedWebView: UIViewRepresentable {
             }
 
             var BAD_TEXTS = [
-                'pinco', 'promocode', 'куш', 'bahis yap',
+                'pinco', 'promocode', ' bahis yap', 'bahis yap',
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
                 'скачай официальное мобильное', 'скачай мобильное приложение',
                 'подпишись на kinogo', 'будь в курсе актуальных',
                 'рекомендации к просмотру'
             ];
 
-            function isPlayer(el) {
+            function containsPlayer(el) {
                 if (!el.querySelector) return false;
                 return el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"], iframe[src*="sibnet"]') !== null;
             }
 
             function hideByText() {
-                var candidates = document.querySelectorAll('div, section, aside, ins, a, span');
+                var candidates = document.querySelectorAll('div, section, aside, ins, span');
                 for (var i = candidates.length - 1; i >= 0; i--) {
                     var el = candidates[i];
                     if (el.getAttribute('data-adblock-hidden')) continue;
-                    if (el.style.display === 'none') continue;
-                    if (isPlayer(el)) continue;
-                    if (el.tagName === 'A' && el.href && el.href.indexOf('.html') !== -1) continue;
+                    if (el.style && el.style.display === 'none') continue;
+                    if (containsPlayer(el)) continue;
 
                     var text = (el.textContent || '').toLowerCase();
-                    if (text.length < 3 || text.length > 600) continue;
+                    if (text.length < 5 || text.length > 800) continue;
 
                     for (var j = 0; j < BAD_TEXTS.length; j++) {
                         if (text.indexOf(BAD_TEXTS[j]) !== -1) {
                             var r = el.getBoundingClientRect();
-                            if (r.height > 30 && r.height < 500 && r.width > 150) {
+                            if (r.height > 40 && r.height < 500 && r.width > 180) {
                                 el.style.setProperty('display', 'none', 'important');
                                 el.style.setProperty('height', '0', 'important');
                                 el.setAttribute('data-adblock-hidden', '1');
@@ -195,7 +195,7 @@ struct ScopedWebView: UIViewRepresentable {
                     var tabs = document.querySelectorAll('.tabs__list li, .tabs li, [role="tab"], .tabs__list a, .tabs a');
                     for (var i = 0; i < tabs.length; i++) {
                         var t = (tabs[i].textContent || '').trim().toLowerCase();
-                        if (t.indexOf('смотреть онлайн') !== -1) {
+                       0 if (t.indexOf('смотреть онлайн') !== -1) {
                             var isActive = tabs[i].classList.contains('active') ||
                                            tabs[i].getAttribute('aria-selected') === 'true';
                             if (!isActive) tabs[i].click();
@@ -211,6 +211,7 @@ struct ScopedWebView: UIViewRepresentable {
                 pending = true;
                 setTimeout(function() {
                     pending = false;
+                    ensureStyle();
                     activateOnlineTab();
                     hideByText();
                     hideByImage();
@@ -224,7 +225,7 @@ struct ScopedWebView: UIViewRepresentable {
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
 
-            [100, 400, 1000, 2000, 3500, 6000, 10000, 15000].forEach(function(d){ setTimeout(run, d); });
+            [100, 400, 1000, 2000, 3500, 600, 10000, 15000, 25000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -232,6 +233,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
@@ -248,7 +250,7 @@ struct ScopedWebView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
 
-    class Coordinator: NSObject, WKNavigationDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         weak var webView: WKWebView?
         let isLoading: Binding<Bool>
 
@@ -265,6 +267,17 @@ struct ScopedWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+        }
+
+        // target="_blank" → открываем в текущем WebView, не теряем ссылку
+        func webView(_ webView: WKWebView,
+                     createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil {
+                webView.load(navigationAction.request)
+            }
+            return nil
         }
     }
 }
