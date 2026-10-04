@@ -1,0 +1,21 @@
+name: CinemaApp
+options:
+  bundleIdPrefix: com.personal.cinema
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    INFOPLIST_FILE: CinemaApp/Info.plist
+    PRODUCT_BUNDLE_IDENTIFIER: com.personal.cinema.CinemaApp
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGN_IDENTITY: ""
+targets:
+  CinemaApp:
+    type: application
+    platform: iOS
+    sources:
+      - CinemaApp
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: NO
