@@ -42,110 +42,70 @@ jobs:
       - name: Generate App Icon
         run: |
           if ! python3 -c "import PIL" 2>/dev/null; then
-            echo "Pillow не найден, устанавливаем..."
             python3 -m pip install --quiet --user --break-system-packages Pillow
-          else
-            echo "Pillow уже установлен."
           fi
 
           mkdir -p CinemaApp/Assets.xcassets/AppIcon.appiconset
 
           cat > CinemaApp/Assets.xcassets/Contents.json << 'JSONEOF'
-          {
-            "info" : {
-              "author" : "xcode",
-              "version" : 1
-            }
-          }
+          { "info" : { "author" : "xcode", "version" : 1 } }
           JSONEOF
 
           cat > CinemaApp/Assets.xcassets/AppIcon.appiconset/Contents.json << 'JSONEOF'
           {
             "images" : [
-              {
-                "filename" : "1024.png",
-                "idiom" : "universal",
-                "platform" : "ios",
-                "size" : "1024x1024"
-              }
+              { "filename" : "1024.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" }
             ],
-            "info" : {
-              "author" : "xcode",
-              "version" : 1
-            }
+            "info" : { "author" : "xcode", "version" : 1 }
           }
           JSONEOF
 
           cat > /tmp/gen_icon.py << 'PYEOF'
           from PIL import Image, ImageDraw, ImageFont
-
           SIZE = 1024
           img = Image.new('RGBA', (SIZE, SIZE), (25, 20, 45, 255))
-
           circle = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           cd = ImageDraw.Draw(circle)
           cd.ellipse([80, 80, 944, 944], fill=(255, 200, 60, 255))
           img.alpha_composite(circle)
-
           body = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           bd = ImageDraw.Draw(body)
           bd.rounded_rectangle([180, 470, 844, 830], radius=45, fill=(20, 20, 30, 255))
           img.alpha_composite(body)
-
           top = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           td = ImageDraw.Draw(top)
           td.rounded_rectangle([180, 300, 844, 470], radius=45, fill=(245, 245, 245, 255))
           for i in range(-3, 15):
               x = 180 + i * 90
-              td.polygon([
-                  (x, 300),
-                  (x + 45, 300),
-                  (x + 45 - 120, 470),
-                  (x - 120, 470)
-              ], fill=(20, 20, 30, 255))
-
+              td.polygon([(x, 300), (x + 45, 300), (x + 45 - 120, 470), (x - 120, 470)], fill=(20, 20, 30, 255))
           mask = Image.new('L', (SIZE, SIZE), 0)
           md = ImageDraw.Draw(mask)
           md.rounded_rectangle([180, 300, 844, 470], radius=45, fill=255)
           r, g, b, a = top.split()
-          clipped = Image.composite(a, Image.new('L', (SIZE, SIZE), 0), mask)
-          top.putalpha(clipped)
+          top.putalpha(Image.composite(a, Image.new('L', (SIZE, SIZE), 0), mask))
           img.alpha_composite(top)
-
           outline = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           od = ImageDraw.Draw(outline)
           od.rounded_rectangle([180, 300, 844, 470], radius=45, outline=(255, 200, 60, 255), width=10)
           od.rounded_rectangle([180, 470, 844, 830], radius=45, outline=(255, 200, 60, 255), width=10)
           img.alpha_composite(outline)
-
           hinge = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           hd = ImageDraw.Draw(hinge)
           hd.ellipse([210, 440, 290, 520], fill=(255, 200, 60, 255))
           hd.ellipse([235, 465, 265, 495], fill=(20, 20, 30, 255))
           img.alpha_composite(hinge)
-
-          text = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
-          textd = ImageDraw.Draw(text)
           font = None
-          for font_path in [
-              "/System/Library/Fonts/Helvetica.ttc",
-              "/System/Library/Fonts/HelveticaNeue.ttc",
-              "/System/Library/Fonts/SFNS.ttf"
-          ]:
+          for fp in ["/System/Library/Fonts/Helvetica.ttc", "/System/Library/Fonts/SFNS.ttf"]:
               try:
-                  font = ImageFont.truetype(font_path, 160)
-                  break
-              except Exception:
-                  continue
-          if font is None:
-              font = ImageFont.load_default()
-          textd.text((512, 660), "KINO", fill=(255, 200, 60, 255), anchor="mm", font=font)
-          img.alpha_composite(text)
-
+                  font = ImageFont.truetype(fp, 160); break
+              except: pass
+          if font is None: font = ImageFont.load_default()
+          txt = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          ImageDraw.Draw(txt).text((512, 660), "KINO", fill=(255, 200, 60, 255), anchor="mm", font=font)
+          img.alpha_composite(txt)
           final = Image.new('RGB', (SIZE, SIZE), (25, 20, 45))
           final.paste(img, (0, 0), img.split()[3])
           final.save('CinemaApp/Assets.xcassets/AppIcon.appiconset/1024.png')
-          print('Иконка успешно сгенерирована.')
           PYEOF
 
           python3 /tmp/gen_icon.py
@@ -169,10 +129,8 @@ jobs:
         run: |
           mkdir -p Payload
           APP_PATH=$(find ./build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
-          echo "Найден .app: $APP_PATH"
           cp -R "$APP_PATH" Payload/
           zip -qr CinemaApp.ipa Payload
-          ls -lh CinemaApp.ipa
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -181,72 +139,45 @@ jobs:
           name: Кино ${{ steps.ver.outputs.version }} (build ${{ steps.ver.outputs.build }})
           files: CinemaApp.ipa
           body: |
-            **Версия:** `${{ steps.ver.outputs.version }}`
-            **Сборка:** `#${{ steps.ver.outputs.build }}`
-            **Дата:** ${{ steps.ver.outputs.date }}
+            **Версия:** `${{ steps.ver.outputs.version }}` | **Сборка:** `#${{ steps.ver.outputs.build }}` | **Дата:** ${{ steps.ver.outputs.date }}
 
             **Скачать:** [CinemaApp.ipa](https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/CinemaApp.ipa)
 
-      - name: Update README with latest IPA info
+      - name: Update README
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-          BUILD:   ${{ steps.ver.outputs.build }}
-          TAG:     ${{ steps.ver.outputs.tag }}
-          DATE:    ${{ steps.ver.outputs.date }}
-          REPO:    ${{ github.repository }}
+          BUILD: ${{ steps.ver.outputs.build }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          DATE: ${{ steps.ver.outputs.date }}
+          REPO: ${{ github.repository }}
         run: |
           python3 - <<'PYEOF'
           import os, re, pathlib
-
-          v    = os.environ['VERSION']
-          b    = os.environ['BUILD']
-          tag  = os.environ['TAG']
-          date = os.environ['DATE']
-          repo = os.environ['REPO']
-
-          dl  = f"https://github.com/{repo}/releases/download/{tag}/CinemaApp.ipa"
+          v = os.environ['VERSION']; b = os.environ['BUILD']
+          tag = os.environ['TAG']; date = os.environ['DATE']; repo = os.environ['REPO']
+          dl = f"https://github.com/{repo}/releases/download/{tag}/CinemaApp.ipa"
           rel = f"https://github.com/{repo}/releases/tag/{tag}"
-          all_rel = f"https://github.com/{repo}/releases"
-
           block = f"""<!-- IPA_INFO_START -->
           ## 📥 Последняя сборка
 
           | Параметр | Значение |
           |---|---|
-          | **Версия** | `{v}` |
-          | **Номер сборки** | `#{b}` |
-          | **Дата** | {date} |
-          | **Скачать IPA** | [**CinemaApp.ipa** ⬇]({dl}) |
-          | **Страница релиза** | [Открыть]({rel}) |
-
-          > Прямая ссылка на файл — {dl}
-          >
-          > Если она не открывается, перейдите в раздел [Releases]({all_rel}) и выберите последнюю сборку вручную.
+          | Версия | `{v}` |
+          | Сборка | `#{b}` |
+          | Дата | {date} |
+          | Скачать | [**CinemaApp.ipa** ⬇]({dl}) |
+          | Релиз | [Открыть]({rel}) |
           <!-- IPA_INFO_END -->"""
-
           p = pathlib.Path('README.md')
-          text = p.read_text(encoding='utf-8')
-          new_text = re.sub(
-              r'<!-- IPA_INFO_START -->.*?<!-- IPA_INFO_END -->',
-              block,
-              text,
-              flags=re.DOTALL
-          )
-          if new_text == text:
-              print('README не изменился.')
-          else:
-              p.write_text(new_text, encoding='utf-8')
-              print('README обновлён.')
+          t = p.read_text(encoding='utf-8')
+          n = re.sub(r'<!-- IPA_INFO_START -->.*?<!-- IPA_INFO_END -->', block, t, flags=re.DOTALL)
+          if n != t: p.write_text(n, encoding='utf-8')
           PYEOF
 
-      - name: Commit updated README
+      - name: Commit README
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add README.md
-          if git diff --staged --quiet; then
-            echo "Изменений в README нет — коммит не нужен."
-          else
-            git commit -m "docs: README → ${{ steps.ver.outputs.tag }} [skip ci]"
-            git push
-          fi
+          git diff --staged --quiet || git commit -m "docs: README → ${{ steps.ver.outputs.tag }} [skip ci]"
+          git diff --staged --quiet || git push
