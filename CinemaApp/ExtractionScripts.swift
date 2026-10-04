@@ -2,10 +2,8 @@ import Foundation
 
 enum ExtractionScripts {
 
-    /// Сбор каталога: работает максимально мягко, ищет любые ссылки с постерами.
     static let catalog = """
     (function() {
-        // Принудительно вытаскиваем ленивые картинки
         try {
             var lazyImgs = document.querySelectorAll('img[data-src], img[data-original], img[data-lazy], img[data-echo]');
             for (var li = 0; li < lazyImgs.length; li++) {
@@ -21,9 +19,10 @@ enum ExtractionScripts {
         var seen = {};
         var anchors = document.querySelectorAll('a[href]');
 
-        var skipWords = ['войти', 'регистрация', 'все', 'далее', 'назад', 'следующая',
-                         'предыдущая', 'наверх', 'комментар', 'подписаться', 'смотреть онлайн',
-                         'оставить', 'перейти', 'главная', 'контакты', 'поиск', 'меню'];
+        var skipWords = ['войти', 'регистрация', 'все ', 'далее', 'назад', 'следующая',
+                         'предыдущая', 'наверх', 'комментар', 'подписаться',
+                         'оставить', 'перейти', 'главная', 'контакты', 'поиск', 'меню',
+                         'смотреть онлайн', 'скачать'];
 
         for (var i = 0; i < anchors.length; i++) {
             var a = anchors[i];
@@ -34,7 +33,6 @@ enum ExtractionScripts {
             if (href.indexOf('tel:') === 0) continue;
             if (href.indexOf('#') === 0) continue;
 
-            // Должна быть ссылка с расширением .html или числовым id + slug
             var isFilmLink = /\\.html($|[?#])/.test(href) ||
                              /\\/\\d+-[\\w-]+/.test(href) ||
                              /\\/(film|films|movie|series|serial|mult|cartoon|dorama|anime|online)/i.test(href);
@@ -47,13 +45,11 @@ enum ExtractionScripts {
             var imgSrc = img.src || img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy') || '';
             if (!imgSrc || imgSrc.indexOf('data:') === 0) continue;
 
-            // Пропускаем мелкие картинки (иконки/логотипы)
             var w = img.naturalWidth || parseInt(img.getAttribute('width')) || 0;
             var h = img.naturalHeight || parseInt(img.getAttribute('height')) || 0;
             if (w > 0 && w < 80) continue;
             if (h > 0 && h < 80) continue;
 
-            // Заголовок: alt картинки → элемент с title/name → текст ссылки
             var title = (img.alt || '').trim();
             if (!title) {
                 var titleEl = a.querySelector('[class*="title" i], [class*="name" i], [class*="caption" i]');
@@ -62,7 +58,6 @@ enum ExtractionScripts {
             if (!title) title = (a.textContent || '').trim();
             title = title.replace(/\\s+/g, ' ').trim();
 
-            // Отсев мусорных заголовков
             if (!title || title.length < 2 || title.length > 250) continue;
             var lt = title.toLowerCase();
             var isSkip = false;
@@ -89,37 +84,83 @@ enum ExtractionScripts {
     })();
     """
 
-    /// Детали фильма: название, описание, постер, плееры, скачивание.
     static let detail = """
     (function() {
+        // Белый список хостов, где реально живут плееры
+        var PLAYER_HOSTS = [
+            'kodik', 'kodikplayer', 'kodik.info',
+            'alloha', 'allohafilm',
+            'bazon',
+            'videocdn',
+            'sibnet',
+            'aniboom',
+            'vk.com/video_ext', 'vk.com/video-', 'vkvideo.ru',
+            'ok.ru/videoembed',
+            'dailymotion.com/embed',
+            'youtube.com/embed', 'youtu.be', 'youtube-nocookie.com',
+            'rutube.ru/play/embed',
+            'mail.ru/video/embed', 'my.mail.ru',
+            'hdvb', 'hdvideobox',
+            'getvideo', 'gvod',
+            'pleer', 'pleer.video', 'pleer.net',
+            'vadbam',
+            'iframe.videocdn',
+            'streamguard', 'voidboost', 'brazzers',
+            '1video', 'videotaboo'
+        ];
+
+        function isPlayerUrl(u) {
+            if (!u) return false;
+            var low = u.toLowerCase();
+            for (var i = 0; i < PLAYER_HOSTS.length; i++) {
+                if (low.indexOf(PLAYER_HOSTS[i]) !== -1) return true;
+            }
+            return false;
+        }
+
+        function normalize(u) {
+            if (!u) return '';
+            u = u.trim();
+            if (u.indexOf('//') === 0) return 'https:' + u;
+            return u;
+        }
+
+        function adHit(u) {
+            if (!u) return false;
+            var low = u.toLowerCase();
+            return low.indexOf('pinco') !== -1 ||
+                   low.indexOf('kysh') !== -1 ||
+                   low.indexOf('promocode') !== -1 ||
+                   low.indexOf('bahis') !== -1 ||
+                   low.indexOf('kazanmak') !== -1 ||
+                   low.indexOf('b5c1d2e8') !== -1 ||
+                   low.indexOf('googlesyndication') !== -1 ||
+                   low.indexOf('doubleclick') !== -1;
+        }
+
         var out = { title: '', description: '', poster: '', players: [], downloads: [] };
         var seen = {};
 
-        // Название
-        var t = document.querySelector('h1, [itemprop="name"], .movie__title, .film-title, .page__title, .title');
+        var t = document.querySelector('h1, [itemprop="name"], .movie__title, .film-title, .page__title');
         if (t) out.title = (t.textContent || '').trim().replace(/\\s+/g, ' ');
 
-        // Описание
         var d = document.querySelector('[itemprop="description"], .movie__description, .film-description, .full-story, .description, .short-story');
         if (d) out.description = (d.textContent || '').trim().substring(0, 3000);
 
-        // Постер
         var p = document.querySelector('[itemprop="image"], .movie__poster img, .film-poster img, .poster img, .main_poster img');
-        if (p) {
-            out.poster = p.src || p.getAttribute('data-src') || '';
-        }
+        if (p) out.poster = p.src || p.getAttribute('data-src') || '';
 
-        var adPatterns = /(ads|banner|b5c1d2e8c9982e3b965a27ac72ru7284cc|pinco|kysh|google|doubleclick|bet|casino)/i;
-
-        // Плееры: iframe с видео-хостингов
+        // Плееры — только если URL хоста в белом списке
         var iframes = document.querySelectorAll('iframe[src], iframe[data-src]');
         for (var i = 0; i < iframes.length; i++) {
-            var src = iframes[i].src || iframes[i].getAttribute('data-src') || '';
+            var raw = iframes[i].src || iframes[i].getAttribute('data-src') || '';
+            var src = normalize(raw);
             if (!src || seen[src]) continue;
-            if (adPatterns.test(src)) continue;
+            if (adHit(src)) continue;
+            if (!isPlayerUrl(src)) continue;
             seen[src] = true;
             var name = 'Плеер ' + (out.players.length + 1);
-            var wrap = iframes[i].closest('[data-title], [data-name], .tabs__content, li, .player-tab, .tab-pane');
+            var wrap = iframes[i].closest('[data-title], [data-name], .tabs__content, li, .player-tab, .tab-pane, .tabs__list li');
             if (wrap) {
                 var lbl = wrap.querySelector('[class*="title" i], [class*="name" i], [class*="label" i]');
                 if (lbl) {
@@ -130,14 +171,15 @@ enum ExtractionScripts {
             out.players.push({ name: name, url: src });
         }
 
-        // Озвучки / альтернативные источники — data-src, data-url, data-player
+        // Озвучки / альтернативные источники — только если домен в белом списке
         var voiceNodes = document.querySelectorAll('[data-translation], [data-voice], [data-player], [data-src], [data-url], a[href*="/player"], a[href*="/play"]');
         for (var j = 0; j < voiceNodes.length; j++) {
             var el = voiceNodes[j];
-            var u = el.getAttribute('data-src') || el.getAttribute('data-url') || el.getAttribute('data-player') || '';
+            var raw2 = el.getAttribute('data-src') || el.getAttribute('data-url') || el.getAttribute('data-player') || '';
+            var u = normalize(raw2);
             if (!u || seen[u]) continue;
-            if (adPatterns.test(u)) continue;
-            if (u.indexOf('//') === -1) continue;
+            if (adHit(u)) continue;
+            if (!isPlayerUrl(u)) continue;
             seen[u] = true;
             var nm = (el.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 60);
             if (!nm) nm = 'Источник ' + (out.players.length + 1);
@@ -149,7 +191,7 @@ enum ExtractionScripts {
         for (var k = 0; k < dl.length; k++) {
             var href = dl[k].href || '';
             if (!href || seen[href]) continue;
-            if (adPatterns.test(href)) continue;
+            if (adHit(href)) continue;
             seen[href] = true;
             var q = (dl[k].textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 60);
             if (!q) q = 'Скачать';
