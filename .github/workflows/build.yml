@@ -41,7 +41,6 @@ jobs:
 
       - name: Generate App Icon
         run: |
-          # Проверяем, есть ли Pillow в системном Python; если нет — ставим с флагом PEP 668
           if ! python3 -c "import PIL" 2>/dev/null; then
             echo "Pillow не найден, устанавливаем..."
             python3 -m pip install --quiet --user --break-system-packages Pillow
@@ -83,19 +82,16 @@ jobs:
           SIZE = 1024
           img = Image.new('RGBA', (SIZE, SIZE), (25, 20, 45, 255))
 
-          # Золотой круг на фоне
           circle = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           cd = ImageDraw.Draw(circle)
           cd.ellipse([80, 80, 944, 944], fill=(255, 200, 60, 255))
           img.alpha_composite(circle)
 
-          # Основа хлопушки (нижняя часть)
           body = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           bd = ImageDraw.Draw(body)
           bd.rounded_rectangle([180, 470, 844, 830], radius=45, fill=(20, 20, 30, 255))
           img.alpha_composite(body)
 
-          # Верхняя часть с полосками
           top = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           td = ImageDraw.Draw(top)
           td.rounded_rectangle([180, 300, 844, 470], radius=45, fill=(245, 245, 245, 255))
@@ -108,7 +104,6 @@ jobs:
                   (x - 120, 470)
               ], fill=(20, 20, 30, 255))
 
-          # Маска-скругление для верхней части
           mask = Image.new('L', (SIZE, SIZE), 0)
           md = ImageDraw.Draw(mask)
           md.rounded_rectangle([180, 300, 844, 470], radius=45, fill=255)
@@ -117,21 +112,18 @@ jobs:
           top.putalpha(clipped)
           img.alpha_composite(top)
 
-          # Золотая обводка
           outline = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           od = ImageDraw.Draw(outline)
           od.rounded_rectangle([180, 300, 844, 470], radius=45, outline=(255, 200, 60, 255), width=10)
           od.rounded_rectangle([180, 470, 844, 830], radius=45, outline=(255, 200, 60, 255), width=10)
           img.alpha_composite(outline)
 
-          # Петля-шарнир слева
           hinge = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           hd = ImageDraw.Draw(hinge)
           hd.ellipse([210, 440, 290, 520], fill=(255, 200, 60, 255))
           hd.ellipse([235, 465, 265, 495], fill=(20, 20, 30, 255))
           img.alpha_composite(hinge)
 
-          # Надпись KINO
           text = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
           textd = ImageDraw.Draw(text)
           font = None
@@ -150,7 +142,6 @@ jobs:
           textd.text((512, 660), "KINO", fill=(255, 200, 60, 255), anchor="mm", font=font)
           img.alpha_composite(text)
 
-          # Финальный RGB
           final = Image.new('RGB', (SIZE, SIZE), (25, 20, 45))
           final.paste(img, (0, 0), img.split()[3])
           final.save('CinemaApp/Assets.xcassets/AppIcon.appiconset/1024.png')
