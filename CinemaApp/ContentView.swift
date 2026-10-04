@@ -56,7 +56,6 @@ struct WebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // JS скрипт, уничтожающий прилипающие нижние баннеры и кликающий крестики
         let js = """
         (function() {
             window.open = function() { return null; };
@@ -64,57 +63,87 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            function killStickyBottomBanners() {
-                var elements = document.querySelectorAll('div, section, aside, footer, p, iframe, a');
-                var screenHeight = window.innerHeight || document.documentElement.clientHeight;
-                var screenWidth = window.innerWidth || document.documentElement.clientWidth;
+            // 1. Принудительный клик по координатам крестика (правый нижний угол)
+            function clickCloseByCoordinates() {
+                var w = window.innerWidth || document.documentElement.clientWidth;
+                var h = window.innerHeight || document.documentElement.clientHeight;
 
-                for (var i = 0; i < elements.length; i++) {
-                    var el = elements[i];
-                    
-                    // Защита: пропускаем видеоплеер
-                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) {
+                // Крестик находится примерно в 20-30px от правого края и 20-50px от нижнего края
+                var checkPoints = [
+                    { x: w - 25, y: h - 35 },
+                    { x: w - 30, y: h - 40 },
+                    { x: w - 20, y: h - 30 },
+                    { x: w - 35, y: h - 45 }
+                ];
+
+                for (var i = 0; i < checkPoints.length; i++) {
+                    var pt = checkPoints[i];
+                    var el = document.elementFromPoint(pt.x, pt.y);
+                    if (!el) continue;
+
+                    // Если попали в сам крестик, его обертку или иконку
+                    var txt = (el.textContent || '').trim();
+                    var cls = (el.className || '').toString().toLowerCase();
+                    var isX = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(txt) !== -1 || cls.indexOf('close') !== -1;
+
+                    if (isX || el.tagName === 'SVG' || el.tagName === 'PATH' || el.tagName === 'BUTTON' || el.tagName === 'SPAN' || el.tagName === 'DIV') {
+                        // Не кликаем, если под куполом оказался плеер
+                        if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
+                            continue;
+                        }
+
+                        try {
+                            var opts = { bubbles: true, cancelable: true, view: window, clientX: pt.x, clientY: pt.y };
+                            el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                            el.dispatchEvent(new PointerEvent('pointerup', opts));
+                            el.dispatchEvent(new MouseEvent('click', opts));
+                            if (typeof el.click === 'function') el.click();
+                        } catch(e) {}
+                    }
+                }
+            }
+
+            // 2. Сканирование и удаление фиксированных блоков внизу
+            function sweepBottomOverlays() {
+                var nodes = document.body ? document.body.querySelectorAll('*') : [];
+                var h = window.innerHeight || document.documentElement.clientHeight;
+                var w = window.innerWidth || document.documentElement.clientWidth;
+
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
+                    if (!el || !el.getBoundingClientRect) continue;
+
+                    // Пропускаем видеоплеер
+                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="videocdn"]')) {
                         continue;
                     }
-                    if (el.tagName === 'IFRAME' && (el.src.indexOf('kodik') !== -1 || el.src.indexOf('alloha') !== -1 || el.src.indexOf('videocdn') !== -1)) {
+                    if (el.tagName === 'IFRAME' && (el.src.indexOf('kodik') !== -1 || el.src.indexOf('alloha') !== -1)) {
                         continue;
                     }
 
-                    var style = window.getComputedStyle(el);
-                    var isFixedOrSticky = style.position === 'fixed' || style.position === 'sticky';
+                    var st = window.getComputedStyle(el);
+                    if (st.position === 'fixed' || st.position === 'sticky') {
+                        var r = el.getBoundingClientRect();
 
-                    if (isFixedOrSticky) {
-                        var rect = el.getBoundingClientRect();
-                        
-                        // Если элемент находится в нижней 25% части экрана и имеет высоту меньше 350px (типичный плавающий баннер)
-                        var isAtBottom = (rect.bottom >= screenHeight - 50) && (rect.top > screenHeight * 0.5);
-                        var isBannerSize = rect.height > 20 && rect.height < 350 && rect.width > (screenWidth * 0.5);
+                        // Условие: находится в самом низу и занимает значительную часть ширины
+                        var isBottomFixed = (r.bottom >= h - 10) && (r.top > h - 300) && (r.height < 350) && (r.width > w * 0.4);
 
-                        if (isAtBottom && isBannerSize) {
-                            
-                            // 1. Ищем внутри этого контейнера кнопку-крестик и кликаем по ней
-                            var targets = el.querySelectorAll('*');
-                            for (var j = 0; j < targets.length; j++) {
-                                var child = targets[j];
-                                var cText = (child.textContent || '').trim();
-                                var cClass = (child.className || '').toString().toLowerCase();
-                                var cRect = child.getBoundingClientRect();
-
-                                var isXMark = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(cText) !== -1;
-                                var isCloseClass = cClass.indexOf('close') !== -1 || cClass.indexOf('cross') !== -1;
-                                var isSmallRoundBtn = cRect.width > 15 && cRect.width < 60 && cRect.height > 15 && cRect.height < 60;
-
-                                if (isXMark || isCloseClass || isSmallRoundBtn) {
+                        if (isBottomFixed) {
+                            // Кликаем по крестику внутри
+                            var closeButtons = el.querySelectorAll('button, span, div, a, svg');
+                            for (var j = 0; j < closeButtons.length; j++) {
+                                var b = closeButtons[j];
+                                var bTxt = (b.textContent || '').trim();
+                                var bRect = b.getBoundingClientRect();
+                                if (['×', '✕', '✖', 'x', 'х', 'X'].indexOf(bTxt) !== -1 || (bRect.width > 0 && bRect.width < 50 && bRect.height < 50)) {
                                     try {
-                                        child.click();
-                                        child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                        child.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
-                                        child.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+                                        b.click();
+                                        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                                     } catch(e) {}
                                 }
                             }
 
-                            // 2. Уничтожаем сам баннер из DOM структуры
+                            // Полностью уничтожаем элемент
                             el.style.setProperty('display', 'none', 'important');
                             el.style.setProperty('visibility', 'hidden', 'important');
                             el.style.setProperty('opacity', '0', 'important');
@@ -127,38 +156,37 @@ struct WebView: UIViewRepresentable {
                 }
             }
 
-            // Быстрый запуск и постоянное слежение
-            killStickyBottomBanners();
+            function runAll() {
+                clickCloseByCoordinates();
+                sweepBottomOverlays();
+            }
+
+            // Запускаем сразу и с интервалами
+            runAll();
+
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                runAll();
+            } else {
+                document.addEventListener('DOMContentLoaded', runAll);
+            }
 
             var observer = new MutationObserver(function() {
-                killStickyBottomBanners();
+                runAll();
             });
 
-            function startObserver() {
-                if (document.body) {
-                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-                }
+            if (document.body) {
+                observer.observe(document.body, { childList: true, subtree: true, attributes: true });
             }
 
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', startObserver);
-            } else {
-                startObserver();
-            }
+            var delays = [100, 250, 500, 800, 1200, 1800, 2500, 3500, 5000, 7000];
+            delays.forEach(function(d) { setTimeout(runAll, d); });
 
-            // Периодическая зачистка (на случай задержек скриптов рекламной сети)
-            var timerIds = [100, 300, 500, 1000, 1500, 2500, 4000, 6000];
-            timerIds.forEach(function(ms) {
-                setTimeout(killStickyBottomBanners, ms);
-            });
-
-            window.addEventListener('scroll', killStickyBottomBanners, { passive: true });
-            window.addEventListener('resize', killStickyBottomBanners, { passive: true });
+            window.addEventListener('scroll', runAll, { passive: true });
+            window.addEventListener('resize', runAll, { passive: true });
         })();
         """
         
-        // Внедряем скрипт сразу при старте загрузки документа
-        let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
         
         compileAdBlockRules(for: config.userContentController)
@@ -228,7 +256,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v8"
+        let identifier = "AdBlockRules_v9"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -239,7 +267,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v8 загружены (\(rulesArray.count) шт.)")
+                print("Правила v9 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
