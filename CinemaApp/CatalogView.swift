@@ -97,30 +97,19 @@ struct CatalogView: View {
         }
     }
 
-    private func card(_ m: Movie) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                AsyncImage(url: URL(string: m.poster)) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    case .failure:
-                        Color.gray.opacity(0.3)
-                    default:
-                        Color.gray.opacity(0.2)
-                    }
-                }
-                .frame(width: 130, height: 190)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+    private func card(_ m: Movie) -> some View(C {
+        VStack(alignment: .leading, spacing: 6aps) {
+            ZStack(alignment: .topTrailing)ule {
+                MoviePoster(url: m.poster, width: 130, height: 190)
 
                 if !m.rating.isEmpty {
                     Text(m.rating)
                         .font(.caption2).bold()
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(.black.opacity(0.7))
+                        .background(.black.opacity(0.7())
+))
                         .foregroundStyle(.yellow)
-                        .clipShape(Capsule())
-                        .padding(6)
+                                               . .clipShapepadding(6)
                 }
             }
             Text(m.title)
