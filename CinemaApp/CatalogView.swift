@@ -1,10 +1,50 @@
 import SwiftUI
 
+enum CatalogSection: String, CaseIterable, Identifiable {
+    case films = "Фильмы"
+    case news = "Новинки"
+    case top = "Топ"
+    case series = "Сериалы"
+
+    var id: String { rawValue }
+
+    var path: String {
+        switch self {
+        case .films: return "/filmy/"
+        case .news: return "/v1new/"
+        case .top: return "/top-filmy/"
+        case .series: return "/serialy/"
+        }
+    }
+}
+
+enum SortOption: String, CaseIterable, Identifiable {
+    case latest = "Последние обновления"
+    case date = "По дате"
+    case views = "По популярности"
+    case rating = "По рейтингу"
+    case title = "По алфавиту"
+
+    var id: String { rawValue }
+
+    var query: String {
+        switch self {
+        case .latest: return ""
+        case .date: return "?do=sort&sort=date&order=desc"
+        case .views: return "?do=sort&sort=views&order=desc"
+        case .rating: return "?do=sort&sort=rating&order=desc"
+        case .title: return "?do=sort&sort=title&order=asc"
+        }
+    }
+}
+
 @MainActor
 final class CatalogViewModel: ObservableObject {
     @Published var movies: [Movie] = []
     @Published var isLoading = false
     @Published var errorText: String?
+    @Published var section: CatalogSection = .films
+    @Published var sort: SortOption = .latest
     @Published var query = ""
 
     private let base = "https://mix.kinogo.mu"
@@ -14,10 +54,11 @@ final class CatalogViewModel: ObservableObject {
         errorText = nil
         do {
             let url: URL
-            if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                url = URL(string: base)!
+            let trimmed = query.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                url = URL(string: "\(base)\(section.path)\(sort.query)")!
             } else {
-                let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
                 url = URL(string: "\(base)/index.php?do=search&subaction=search&story=\(q)")!
             }
             let json = try await SiteParser.shared.extract(
@@ -45,7 +86,12 @@ struct CatalogView: View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-                content
+
+                VStack(spacing: 0) {
+                    sectionBar
+                    sortBar
+                    content
+                }
             }
             .navigationTitle("Кино")
             .searchable(text: $vm.query, prompt: "Поиск фильма")
@@ -60,17 +106,85 @@ struct CatalogView: View {
                 }
             }
             .task { if vm.movies.isEmpty { await vm.load() } }
+            .onChange(of: vm.section) { _ in Task { await vm.load() } }
+            .onChange(of: vm.sort) { _ in Task { await vm.load() } }
             .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
         }
     }
 
+    private var sectionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(CatalogSection.allCases) { s in
+                    Button {
+                        vm.section = s
+                    } label: {
+                        Text(s.rawValue)
+                            .font(.subheadline).bold()
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(vm.section == s ? Color.blue : Color.white.opacity(0.08))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(Color.black)
+    }
+
+    private var sortBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.up.arrow.down")
+                .foregroundStyle(.white.opacity(0.6))
+                .font(.caption)
+            Menu {
+                ForEach(SortOption.allCases) { opt in
+                    Button {
+                        vm.sort = opt
+                    } label: {
+                        if vm.sort == opt {
+                            Label(opt.rawValue, systemImage: "checkmark")
+                        } else {
+                            Text(opt.rawValue)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Сортировка:")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.6))
+                    Text(vm.sort.rawValue)
+                        .font(.caption).bold()
+                        .foregroundStyle(.white)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Color.white.opacity(0.08))
+                .clipShape(Capsule())
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .background(Color.black)
+    }
+
     @ViewBuilder
     private var content: some View {
         if vm.isLoading && vm.movies.isEmpty {
+            Spacer()
             ProgressView().tint(.white)
+            Spacer()
         } else if let err = vm.errorText, vm.movies.isEmpty {
+            Spacer()
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle")
                     .font(.system(size: 40))
@@ -80,6 +194,7 @@ struct CatalogView: View {
                     .buttonStyle(.borderedProminent)
             }
             .padding()
+            Spacer()
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 12) {
