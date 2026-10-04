@@ -43,13 +43,11 @@ final class CatalogViewModel: ObservableObject {
     @Published var movies: [Movie] = []
     @Published var isLoading = false
     @Published var errorText: String?
-    @Published var section: CatalogSection = .films
-    @Published var sort: SortOption = .latest
     @Published var query = ""
 
     private let base = "https://mix.kinogo.mu"
 
-    func load() async {
+    func load(section: CatalogSection, sort: SortOption) async {
         isLoading = true
         errorText = nil
         do {
@@ -64,7 +62,7 @@ final class CatalogViewModel: ObservableObject {
             let json = try await SiteParser.shared.extract(
                 from: url,
                 js: ExtractionScripts.catalog,
-                waitAfterLoad: 4.0
+                waitAfterLoad: 5.0
             )
             guard let data = json.data(using: .utf8) else { throw ParserError.invalidResult }
             let parsed = try JSONDecoder().decode([Movie].self, from: data)
@@ -79,6 +77,8 @@ final class CatalogViewModel: ObservableObject {
 
 struct CatalogView: View {
     @StateObject private var vm = CatalogViewModel()
+    @State private var section: CatalogSection = .films
+    @State private var sort: SortOption = .latest
 
     private let columns = [GridItem(.adaptive(minimum: 130), spacing: 12)]
 
@@ -86,7 +86,6 @@ struct CatalogView: View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-
                 VStack(spacing: 0) {
                     sectionBar
                     sortBar
@@ -95,19 +94,21 @@ struct CatalogView: View {
             }
             .navigationTitle("Кино")
             .searchable(text: $vm.query, prompt: "Поиск фильма")
-            .onSubmit(of: .search) { Task { await vm.load() } }
+            .onSubmit(of: .search) {
+                Task { await vm.load(section: section, sort: sort) }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        Task { await vm.load() }
+                        Task { await vm.load(section: section, sort: sort) }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
             }
-            .task { if vm.movies.isEmpty { await vm.load() } }
-            .onChange(of: vm.section) { _ in Task { await vm.load() } }
-            .onChange(of: vm.sort) { _ in Task { await vm.load() } }
+            .task(id: "\(section.rawValue)|\(sort.rawValue)") {
+                await vm.load(section: section, sort: sort)
+            }
             .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
@@ -119,12 +120,12 @@ struct CatalogView: View {
             HStack(spacing: 8) {
                 ForEach(CatalogSection.allCases) { s in
                     Button {
-                        vm.section = s
+                        section = s
                     } label: {
                         Text(s.rawValue)
                             .font(.subheadline).bold()
                             .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(vm.section == s ? Color.blue : Color.white.opacity(0.08))
+                            .background(section == s ? Color.blue : Color.white.opacity(0.08))
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                     }
@@ -145,9 +146,9 @@ struct CatalogView: View {
             Menu {
                 ForEach(SortOption.allCases) { opt in
                     Button {
-                        vm.sort = opt
+                        sort = opt
                     } label: {
-                        if vm.sort == opt {
+                        if sort == opt {
                             Label(opt.rawValue, systemImage: "checkmark")
                         } else {
                             Text(opt.rawValue)
@@ -159,7 +160,7 @@ struct CatalogView: View {
                     Text("Сортировка:")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
-                    Text(vm.sort.rawValue)
+                    Text(sort.rawValue)
                         .font(.caption).bold()
                         .foregroundStyle(.white)
                     Image(systemName: "chevron.down")
@@ -190,8 +191,10 @@ struct CatalogView: View {
                     .font(.system(size: 40))
                     .foregroundStyle(.orange)
                 Text(err).foregroundStyle(.white).multilineTextAlignment(.center)
-                Button("Повторить") { Task { await vm.load() } }
-                    .buttonStyle(.borderedProminent)
+                Button("Повторить") {
+                    Task { await vm.load(section: section, sort: sort) }
+                }
+                .buttonStyle(.borderedProminent)
             }
             .padding()
             Spacer()
@@ -208,7 +211,7 @@ struct CatalogView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 20)
             }
-            .refreshable { await vm.load() }
+            .refreshable { await vm.load(section: section, sort: sort) }
         }
     }
 
