@@ -56,7 +56,7 @@ struct WebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // Внедряем единый глобальный стилизатор, блокирующий баннеры на уровне макета без кликов
+        // Скрипт "фантомного" скрытия, работающий непрерывно
         let js = """
         (function() {
             window.open = function() { return null; };
@@ -64,18 +64,16 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            // Добавляем глобальный CSS, глушащий фиксированные нижние блоки
+            // Глобальные стили для известных контейнеров
             var styleEl = document.createElement('style');
             styleEl.innerHTML = `
-                div[style*="position: fixed"][style*="bottom: 0"],
-                div[style*="position:fixed"][style*="bottom:0"],
-                div[style*="position: fixed"][style*="bottom:0"],
-                div[style*="position:fixed"][style*="bottom: 0"],
+                div[style*="position: fixed"][style*="bottom"],
+                div[style*="position:fixed"][style*="bottom"],
                 [class*="sticky-banner"], [id*="sticky-banner"],
                 [class*="bottom-ad"], [id*="bottom-ad"],
-                [class*="floor-ad"], [id*="floor-ad"] {
-                    display: none !important;
-                    visibility: hidden !important;
+                a[href*="pinco"], div[style*="z-index: 2147483647"],
+                div[style*="z-index: 99999"] {
+                    transform: translateY(9999px) !important;
                     opacity: 0 !important;
                     pointer-events: none !important;
                     height: 0 !important;
@@ -83,65 +81,52 @@ struct WebView: UIViewRepresentable {
             `;
             (document.head || document.documentElement).appendChild(styleEl);
 
-            function purgeBottomBanners() {
-                var nodes = document.querySelectorAll('body > div, body > iframe, body > section');
-                var screenHeight = window.innerHeight || document.documentElement.clientHeight;
+            function phantomHideBanners() {
+                var h = window.innerHeight || document.documentElement.clientHeight;
+                var w = window.innerWidth || document.documentElement.clientWidth;
+                var nodes = document.querySelectorAll('body > div, body > section, body > aside, body > iframe');
 
                 for (var i = 0; i < nodes.length; i++) {
                     var el = nodes[i];
-                    if (!el) continue;
+                    if (!el || !el.getBoundingClientRect) continue;
 
-                    // Защищаем контейнер плеера
-                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) {
-                        continue;
-                    }
-                    if (el.id === 'player' || el.className.indexOf('player') !== -1) {
-                        continue;
-                    }
+                    // Защита плеера - никогда его не трогаем
+                    if (el.closest && el.closest('#player, .player')) continue;
+                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) continue;
+                    if (el.tagName === 'IFRAME' && (el.src.indexOf('kodik') !== -1 || el.src.indexOf('alloha') !== -1)) continue;
 
-                    var style = window.getComputedStyle(el);
-                    var isFixed = style.position === 'fixed' || style.position === 'sticky';
+                    var st = window.getComputedStyle(el);
+                    var isFixed = st.position === 'fixed' || st.position === 'sticky';
 
                     if (isFixed) {
                         var rect = el.getBoundingClientRect();
-                        // Если элемент прилип к нижней части экрана (bottom >= screenHeight - 20)
-                        if (rect.bottom >= screenHeight - 30 && rect.top > screenHeight * 0.4) {
-                            el.style.setProperty('display', 'none', 'important');
+                        
+                        // Если элемент в нижней части экрана и похож на баннер (высота от 20 до 400px)
+                        if (rect.top > (h * 0.4) && rect.bottom >= (h - 100) && rect.height > 20 && rect.height < 400 && rect.width > (w * 0.3)) {
+                            // Не удаляем и не делаем display: none. Просто выкидываем за пределы видимости!
+                            el.style.setProperty('transform', 'translateY(9999px)', 'important');
+                            el.style.setProperty('opacity', '0', 'important');
                             el.style.setProperty('pointer-events', 'none', 'important');
-                            if (el.parentNode) {
-                                el.parentNode.removeChild(el);
-                            }
+                            el.style.setProperty('z-index', '-999', 'important');
                         }
                     }
                 }
             }
 
-            // Безопасный наблюдатель за DOM без тапов и фокусов
-            var observer = new MutationObserver(function() {
-                purgeBottomBanners();
-            });
+            // Быстрый запуск на старте
+            phantomHideBanners();
 
-            function start() {
-                purgeBottomBanners();
-                if (document.body) {
-                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-                }
-            }
+            // Бесконечный легкий сканер (каждые 800 мс). 
+            // Он не грузит процессор, но перехватывает баннеры, генерируемые по таймеру
+            setInterval(phantomHideBanners, 800);
 
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', start);
-            } else {
-                start();
-            }
-
-            // Дополнительная проверка при взаимодействии (без кликов)
-            window.addEventListener('scroll', purgeBottomBanners, { passive: true });
-            window.addEventListener('touchend', function() {
-                setTimeout(purgeBottomBanners, 100);
-            }, { passive: true });
+            // На всякий случай дублируем при касаниях (перехват скриптов, срабатывающих по touch)
+            window.addEventListener('touchstart', phantomHideBanners, { passive: true });
+            window.addEventListener('scroll', phantomHideBanners, { passive: true });
         })();
         """
         
+        // Внедряем скрипт во все фреймы (включая рекламные iframe)
         let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
         
@@ -212,7 +197,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v12"
+        let identifier = "AdBlockRules_v13" // Обновляем версию правил
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -223,7 +208,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v12 загружены (\(rulesArray.count) шт.)")
+                print("Правила v13 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
