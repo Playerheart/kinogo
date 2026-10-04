@@ -63,15 +63,15 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            var hasClicked = false; // Флаг: закрывать строго 1 раз
+            var clickCount = 0;      // Лимит: максимум 2 клика за страницу
+            var isCoolingDown = false; // Пауза между кликами, чтобы не сбивать скролл
 
-            function tryOneTimeClose() {
-                if (hasClicked) return;
+            function tryControlledClose() {
+                if (clickCount >= 2 || isCoolingDown) return;
 
                 var w = window.innerWidth || document.documentElement.clientWidth;
                 var h = window.innerHeight || document.documentElement.clientHeight;
 
-                // Точки проверки крестика в правом нижнем углу
                 var checkPoints = [
                     { x: w - 25, y: h - 35 },
                     { x: w - 30, y: h - 40 },
@@ -83,7 +83,7 @@ struct WebView: UIViewRepresentable {
                     var el = document.elementFromPoint(pt.x, pt.y);
                     if (!el) continue;
 
-                    // Не задеваем плеер
+                    // Не затрагиваем плеер
                     if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
                         continue;
                     }
@@ -98,23 +98,30 @@ struct WebView: UIViewRepresentable {
                             el.dispatchEvent(new MouseEvent('click', opts));
                             if (typeof el.click === 'function') el.click();
                             
-                            hasClicked = true; // Успешно кликнули — завершаем работу
+                            clickCount++;
+                            isCoolingDown = true;
 
-                            // Также скрываем контейнер
+                            // Скрываем сам контейнер
                             var parentFixed = el.closest('div[style*="fixed"], div[style*="sticky"], .sticky-banner');
                             if (parentFixed) {
                                 parentFixed.style.setProperty('display', 'none', 'important');
                             }
+
+                            // Пауза 2 секунды перед тем, как разблокировать проверку на второй баннер
+                            setTimeout(function() {
+                                isCoolingDown = false;
+                            }, 2000);
+
                             break;
                         } catch(e) {}
                     }
                 }
             }
 
-            // Запускаем с небольшими интервалами только в первые секунды загрузки страницы
-            var attempts = [300, 600, 1000, 1500, 2500];
-            attempts.forEach(function(delay) {
-                setTimeout(tryOneTimeClose, delay);
+            // График точечных проверок (первая волна + проверка на второй баннер спустя паузу)
+            var schedule = [300, 600, 1000, 2000, 3500, 5000, 7000];
+            schedule.forEach(function(delay) {
+                setTimeout(tryControlledClose, delay);
             });
         })();
         """
@@ -189,7 +196,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v10"
+        let identifier = "AdBlockRules_v11"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -200,7 +207,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v10 загружены (\(rulesArray.count) шт.)")
+                print("Правила v11 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
