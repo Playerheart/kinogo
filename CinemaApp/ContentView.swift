@@ -66,11 +66,57 @@ struct WebView: UIViewRepresentable {
             var HIDE_STYLE_ID = '__adblock_style__';
             var AD_URL_KEYWORDS = ['pinco', 'kysh', 'promocode', 'bahis', 'kazanmak',
                                    'b5c1d2e8c9982e3b965a27ac72ru7284cc', 'pincogames',
-                                   'kasino', 'casino', 'betting', 'bet'];
+                                   'kasino', 'casino', 'betting', 'bet',
+                                   'advert', 'sponsor', 'banner'];
+
+            var CLOSE_SELECTORS = [
+                '[class*="close" i]', '[class*="Close" i]', '[class*="CLOSE"]',
+                '[id*="close" i]', '[id*="Close" i]',
+                '[class*="dismiss" i]', '[id*="dismiss" i]',
+                '[class*="btn-close" i]', '[class*="btn_close" i]', '[class*="btnClose" i]',
+                '[class*="ad-close" i]', '[class*="ad_close" i]', '[class*="adClose" i]',
+                '[class*="modal-close" i]', '[class*="popup-close" i]',
+                '[class*="banner-close" i]', '[class*="banner_close" i]',
+                '[class*="close-btn" i]', '[class*="close_btn" i]', '[class*="closeBtn" i]',
+                '[aria-label*="close" i]', '[aria-label*="закрыть" i]',
+                '[aria-label*="Закрыть" i]', '[aria-label*="dismiss" i]',
+                '[title*="close" i]', '[title*="закрыть" i]', '[title*="Close" i]',
+                '[data-action*="close" i]', '[data-dismiss]', '[data-close]',
+                '[data-role*="close" i]',
+                'button.close', 'div.close', 'span.close', 'a.close',
+                'button.btn-close', 'button[class*="close"]',
+                '.close-button', '.closeButton', '.close_btn',
+                '.popup__close', '.modal__close', '.banner__close',
+                '.close-icon', '.closeIcon', '.close_icon',
+                'svg[class*="close" i]', 'svg[class*="x" i]',
+                'button[aria-label*="x" i]', 'button[aria-label*="х" i]'
+            ];
+
+            // Типовые имена классов для нижних прилипающих баннеров
+            var STICKY_BOTTOM_SELECTORS = [
+                '[class*="sticky-ad" i]', '[class*="sticky_ad" i]', '[class*="stickyAd" i]',
+                '[id*="sticky-ad" i]', '[id*="stickyAd" i]',
+                '[class*="sticky-banner" i]', '[class*="stickyBanner" i]',
+                '[class*="sticky-bottom" i]', '[class*="stickyBottom" i]',
+                '[class*="floor-banner" i]', '[class*="floor_banner" i]', '[class*="floorBanner" i]',
+                '[class*="floor-ad" i]', '[class*="floorAd" i]', '[class*="floor_ad" i]',
+                '[class*="mobile-bottom-ad" i]', '[class*="mobile_bottom_ad" i]',
+                '[class*="mobileBottomAd" i]',
+                '[class*="bottom-ad" i]', '[class*="bottom_ad" i]', '[class*="bottomAd" i]',
+                '[id*="bottom-ad" i]', '[id*="bottomAd" i]',
+                '[class*="fixed-bottom" i]', '[class*="fixed_bottom" i]', '[class*="fixedBottom" i]',
+                '[class*="anchor-ad" i]', '[class*="anchorAd" i]',
+                '[class*="floating-ad" i]', '[class*="floatingAd" i]',
+                '[class*="interstitial" i]', '[class*="interstitial-ad" i]',
+                '[class*="adhesion" i]', '[class*="adhesive" i]',
+                '[class*="smart-banner" i]', '[class*="smartBanner" i]',
+                '.gpt-ad', '.gpt-slot', '.pb-ad', '.gads',
+                '[id^="google_ads_"]', '[id*="div-gpt-ad"]', '[id*="aswift"]'
+            ];
 
             function urlIsAd(url) {
                 if (!url) return false;
-                url = url.toLowerCase();
+                url = String(url).toLowerCase();
                 for (var i = 0; i < AD_URL_KEYWORDS.length; i++) {
                     if (url.indexOf(AD_URL_KEYWORDS[i]) !== -1) return true;
                 }
@@ -87,7 +133,6 @@ struct WebView: UIViewRepresentable {
                 return true;
             }
 
-            // Агрессивный клик: pointer + touch + mouse + .click()
             function hardClick(el) {
                 if (!el) return;
                 try {
@@ -105,13 +150,37 @@ struct WebView: UIViewRepresentable {
                         el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
                     });
                 } catch(e) {}
-                try {
-                    if (typeof el.click === 'function') el.click();
-                } catch(e) {}
-                // Обход onclick напрямую
-                try {
-                    if (el.onclick) el.onclick.call(el, new MouseEvent('click'));
-                } catch(e) {}
+                try { if (typeof el.click === 'function') el.click(); } catch(e) {}
+                try { if (el.onclick) el.onclick.call(el, new MouseEvent('click')); } catch(e) {}
+            }
+
+            function forceHide(el) {
+                if (!el || !el.style) return;
+                el.style.setProperty('display', 'none', 'important');
+                el.style.setProperty('visibility', 'hidden', 'important');
+                el.style.setProperty('opacity', '0', 'important');
+                el.style.setProperty('pointer-events', 'none', 'important');
+                el.style.setProperty('height', '0', 'important');
+                el.style.setProperty('max-height', '0', 'important');
+                el.setAttribute('data-adblock-hidden', '1');
+            }
+
+            function hideAncestorOverlay(el, maxDepth) {
+                var p = el;
+                var depth = 0;
+                maxDepth = maxDepth || 10;
+                while (p && depth < maxDepth) {
+                    var st = window.getComputedStyle(p);
+                    var z = parseInt(st.zIndex) || 0;
+                    var pos = st.position;
+                    if (pos === 'fixed' || (pos === 'absolute' && z > 50)) {
+                        forceHide(p);
+                        return p;
+                    }
+                    p = p.parentElement;
+                    depth++;
+                }
+                return null;
             }
 
             function injectStyle() {
@@ -132,14 +201,30 @@ struct WebView: UIViewRepresentable {
                     [src*="pinco_banner"], [href*="pinco_banner"],
                     [src*="kysh"], [class*="kysh"], [id*="kysh"],
                     [src*="promocode"], [class*="promocode"],
-                    a[href*="bahis"], a[href*="kazanmak"], a[href*="kazan"] {
+                    a[href*="bahis"], a[href*="kazanmak"], a[href*="kazan"],
+                    [class*="sticky-ad" i], [class*="sticky_ad" i], [class*="stickyAd" i],
+                    [id*="sticky-ad" i], [id*="stickyAd" i],
+                    [class*="sticky-banner" i], [class*="stickyBanner" i],
+                    [class*="sticky-bottom" i], [class*="stickyBottom" i],
+                    [class*="floor-banner" i], [class*="floor_banner" i], [class*="floorBanner" i],
+                    [class*="floor-ad" i], [class*="floorAd" i], [class*="floor_ad" i],
+                    [class*="mobile-bottom-ad" i], [class*="mobile_bottom_ad" i],
+                    [class*="mobileBottomAd" i],
+                    [class*="bottom-ad" i], [class*="bottom_ad" i], [class*="bottomAd" i],
+                    [class*="fixed-bottom" i], [class*="fixedBottom" i],
+                    [class*="anchor-ad" i], [class*="anchorAd" i],
+                    [class*="floating-ad" i], [class*="floatingAd" i],
+                    [class*="interstitial" i], [class*="adhesion" i],
+                    [class*="smart-banner" i], [class*="smartBanner" i],
+                    [id^="google_ads_"], [id*="div-gpt-ad"],
+                    [data-adblock-hidden="1"] {
                         display: none !important;
                         visibility: hidden !important;
                         opacity: 0 !important;
                         pointer-events: none !important;
                         height: 0 !important;
-                        width: 0 !important;
                         max-height: 0 !important;
+                        width: 0 !important;
                         max-width: 0 !important;
                         position: absolute !important;
                         top: -99999px !important;
@@ -160,7 +245,6 @@ struct WebView: UIViewRepresentable {
                 }
             }
 
-            // Скрываем все <img> и <iframe> с рекламными URL + их оверлеи
             function hideAdMedia() {
                 var media = document.querySelectorAll('img, iframe, video, embed, object');
                 for (var i = 0; i < media.length; i++) {
@@ -168,33 +252,147 @@ struct WebView: UIViewRepresentable {
                     var src = (el.getAttribute('src') || el.getAttribute('data-src') || '').toLowerCase();
                     var isBroken = el.tagName === 'IMG' && el.complete && el.naturalWidth === 0;
                     if (urlIsAd(src) || isBroken) {
-                        el.style.display = 'none';
-                        el.style.visibility = 'hidden';
-                        // Поднимаемся до родителя-оверлея и скрываем его целиком
-                        var p = el.parentElement;
-                        var depth = 0;
-                        while (p && depth < 8) {
-                            var st = window.getComputedStyle(p);
-                            var r = p.getBoundingClientRect();
-                            // Если родитель крупный и позиционированный — скрываем его
-                            if ((st.position === 'fixed' || st.position === 'absolute') && r.width > 100 && r.height > 50) {
-                                p.style.display = 'none';
-                                p.style.visibility = 'hidden';
-                                p.style.pointerEvents = 'none';
-                                break;
-                            }
-                            p = p.parentElement;
-                            depth++;
-                        }
+                        forceHide(el);
+                        hideAncestorOverlay(el, 8);
                     }
                 }
             }
 
-            // Ищем крестики ТОЛЬКО по тексту × ✕ X — быстрый путь
+            // Скрываем явные sticky/floor/bottom баннеры по селекторам
+            function hideStickyBottomAds() {
+                for (var s = 0; s < STICKY_BOTTOM_SELECTORS.length; s++) {
+                    var list;
+                    try {
+                        list = document.querySelectorAll(STICKY_BOTTOM_SELECTORS[s]);
+                    } catch(e) { continue; }
+                    for (var i = 0; i < list.length; i++) {
+                        var el = list[i];
+                        // Не трогаем плеер
+                        if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) continue;
+                        forceHide(el);
+                    }
+                }
+            }
+
+            // Автопоиск ЛЮБОГО элемента, зафиксированного снизу экрана
+            function hideFixedBottomElements() {
+                var all = document.querySelectorAll('div, section, aside, footer, ins');
+                for (var i = 0; i < all.length; i++) {
+                    var el = all[i];
+                    if (el.getAttribute('data-adblock-hidden')) continue;
+                    var st = window.getComputedStyle(el);
+                    if (st.position !== 'fixed' && st.position !== 'sticky') continue;
+
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 100 || r.height < 30) continue;
+                    if (r.height > 400) continue;              // не баннер
+                    if (r.width > window.innerWidth + 5) continue;
+
+                    // Снизу экрана?
+                    var isBottom = (window.innerHeight - r.bottom) < 30;
+                    var isFullWidth = (r.width / window.innerWidth) > 0.7;
+                    if (!isBottom || !isFullWidth) continue;
+
+                    // Содержит ли рекламу?
+                    var html = el.innerHTML || '';
+                    var hasAdImg = false;
+                    var imgs = el.querySelectorAll('img');
+                    for (var k = 0; k < imgs.length; k++) {
+                        var isrc = (imgs[k].getAttribute('src') || '').toLowerCase();
+                        if (urlIsAd(isrc) || (imgs[k].complete && imgs[k].naturalWidth === 0)) {
+                            hasAdImg = true;
+                            break;
+                        }
+                    }
+                    var hasAdIframe = false;
+                    var iframes = el.querySelectorAll('iframe');
+                    for (var j = 0; j < iframes.length; j++) {
+                        var fsrc = (iframes[j].getAttribute('src') || '').toLowerCase();
+                        if (urlIsAd(fsrc)) {
+                            hasAdIframe = true;
+                            break;
+                        }
+                    }
+                    var htmlLower = html.toLowerCase();
+                    var hasAdWordInHTML = htmlLower.indexOf('pinco') !== -1 ||
+                                          htmlLower.indexOf('kysh') !== -1 ||
+                                          htmlLower.indexOf('промокод') !== -1 ||
+                                          htmlLower.indexOf('promocode') !== -1 ||
+                                          htmlLower.indexOf('bahis') !== -1 ||
+                                          htmlLower.indexOf('kazanmak') !== -1 ||
+                                          htmlLower.indexOf('алғашқы') !== -1 ||
+                                          htmlLower.indexOf('жеңіске') !== -1 ||
+                                          htmlLower.indexOf('жениске') !== -1;
+
+                    if (hasAdImg || hasAdIframe || hasAdWordInHTML) {
+                        forceHide(el);
+                    }
+                }
+            }
+
+            // Детект инлайн-стилей вида "position: fixed; bottom: 0"
+            function hideInlineFixedBottom() {
+                var all = document.querySelectorAll('[style]');
+                for (var i = 0; i < all.length; i++) {
+                    var el = all[i];
+                    if (el.getAttribute('data-adblock-hidden')) continue;
+                    var st = el.getAttribute('style') || '';
+                    if (st.toLowerCase().indexOf('fixed') === -1) continue;
+                    if (st.toLowerCase().indexOf('bottom') === -1) continue;
+
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 100 || r.height < 30) continue;
+                    if (r.height > 400) continue;
+
+                    // Проверяем содержимое
+                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"]')) continue;
+
+                    var html = (el.innerHTML || '').toLowerCase();
+                    var imgs = el.querySelectorAll('img');
+                    var hasAdImg = false;
+                    for (var k = 0; k < imgs.length; k++) {
+                        var src = (imgs[k].getAttribute('src') || '').toLowerCase();
+                        if (urlIsAd(src) || (imgs[k].complete && imgs[k].naturalWidth === 0)) {
+                            hasAdImg = true;
+                            break;
+                        }
+                    }
+                    var hasAdWord = html.indexOf('pinco') !== -1 || html.indexOf('kysh') !== -1 ||
+                                    html.indexOf('promocode') !== -1 || html.indexOf('bahis') !== -1 ||
+                                    html.indexOf('алғашқы') !== -1 || html.indexOf('жеңіске') !== -1 ||
+                                    html.indexOf('kasino') !== -1 || html.indexOf('casino') !== -1;
+                    if (hasAdImg || hasAdWord) {
+                        forceHide(el);
+                    }
+                }
+            }
+
+            function clickAllCloseButtons() {
+                for (var s = 0; s < CLOSE_SELECTORS.length; s++) {
+                    var list;
+                    try {
+                        list = document.querySelectorAll(CLOSE_SELECTORS[s]);
+                    } catch(e) { continue; }
+                    for (var i = 0; i < list.length; i++) {
+                        var el = list[i];
+                        if (!isVisible(el)) continue;
+                        var r = el.getBoundingClientRect();
+                        if (r.width > 200 || r.height > 200) continue;
+                        hardClick(el);
+                        if (el.parentElement) hardClick(el.parentElement);
+                        if (el.parentElement && el.parentElement.parentElement) {
+                            hardClick(el.parentElement.parentElement);
+                        }
+                        forceHide(el);
+                        hideAncestorOverlay(el, 10);
+                    }
+                }
+            }
+
             function clickByTextClose() {
                 if (!document.body) return;
                 var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-                var targets = ['×','✕','✖','⨯','✗','X','x','Х','х','ⓧ','❌','❎'];
+                var targets = ['×','✕','✖','⨯','✗','X','x','Х','х','ⓧ','❌','❎','⨉'];
                 var node;
                 while ((node = walker.nextNode())) {
                     var t = (node.nodeValue || '').trim();
@@ -215,126 +413,9 @@ struct WebView: UIViewRepresentable {
                     var target = clickable || el;
                     if (isVisible(target)) {
                         hardClick(target);
-                        hideAncestorOverlay(target);
+                        forceHide(target);
+                        hideAncestorOverlay(target, 10);
                     }
-                }
-            }
-
-            // Главный метод: ищем рекламу и в её правом верхнем углу — крестик
-            function closeAdByProximity() {
-                // 1. Находим все рекламные контейнеры
-                var adContainers = [];
-                var allMedia = document.querySelectorAll('img, iframe');
-                for (var i = 0; i < allMedia.length; i++) {
-                    var m = allMedia[i];
-                    var src = (m.getAttribute('src') || '').toLowerCase();
-                    if (!urlIsAd(src)) continue;
-                    // Поднимаемся до позиционированного контейнера
-                    var p = m.parentElement;
-                    var depth = 0;
-                    while (p && depth < 10) {
-                        var st = window.getComputedStyle(p);
-                        if (st.position === 'fixed' || st.position === 'absolute') {
-                            var r = p.getBoundingClientRect();
-                            if (r.width > 100 && r.height > 50 && r.top >= 0 && r.top < window.innerHeight) {
-                                adContainers.push(p);
-                            }
-                            break;
-                        }
-                        p = p.parentElement;
-                        depth++;
-                    }
-                }
-
-                // 2. Для каждого рекламного контейнера ищем крестик в правом верхнем углу
-                for (var c = 0; c < adContainers.length; c++) {
-                    var container = adContainers[c];
-                    var rect = container.getBoundingClientRect();
-                    var searchArea = {
-                        left: rect.right - 120,
-                        right: rect.right + 20,
-                        top: rect.top - 20,
-                        bottom: rect.top + 120
-                    };
-
-                    // Обходим всё внутри родителя и ищем небольшой квадратный кликабельный элемент
-                    var parent = container.parentElement || document.body;
-                    var all = parent.querySelectorAll('*');
-                    var bestBtn = null;
-                    var bestScore = Infinity;
-                    for (var j = 0; j < all.length; j++) {
-                        var el = all[j];
-                        if (!isVisible(el)) continue;
-                        if (el.children.length > 3) continue; // крестик — лист или почти лист
-                        var r = el.getBoundingClientRect();
-                        // Крестик: небольшой (20–80px), почти квадратный
-                        if (r.width < 15 || r.width > 100) continue;
-                        if (r.height < 15 || r.height > 100) continue;
-                        if (Math.abs(r.width - r.height) > 20) continue;
-                        // В области правого верхнего угла рекламы
-                        var cx = r.left + r.width / 2;
-                        var cy = r.top + r.height / 2;
-                        if (cx < searchArea.left || cx > searchArea.right) continue;
-                        if (cy < searchArea.top || cy > searchArea.bottom) continue;
-                        // Чем ближе к углу — тем лучше
-                        var dist = Math.hypot(cx - rect.right, cy - rect.top);
-                        if (dist < bestScore) {
-                            bestScore = dist;
-                            bestBtn = el;
-                        }
-                    }
-                    if (bestBtn) {
-                        hardClick(bestBtn);
-                        // Иногда крестик внутри <button> или <a>
-                        var wrap = bestBtn.closest('button, a, [role="button"]');
-                        if (wrap && wrap !== bestBtn) hardClick(wrap);
-                    }
-
-                    // 3. В любом случае скрываем сам контейнер с рекламой
-                    container.style.display = 'none';
-                    container.style.visibility = 'hidden';
-                    container.style.pointerEvents = 'none';
-                }
-            }
-
-            function hideAncestorOverlay(el) {
-                var p = el;
-                var depth = 0;
-                while (p && depth < 10) {
-                    var st = window.getComputedStyle(p);
-                    var z = parseInt(st.zIndex) || 0;
-                    var pos = st.position;
-                    if (pos === 'fixed' || (pos === 'absolute' && z > 100)) {
-                        p.style.display = 'none';
-                        p.style.visibility = 'hidden';
-                        p.style.pointerEvents = 'none';
-                        return true;
-                    }
-                    p = p.parentElement;
-                    depth++;
-                }
-                return false;
-            }
-
-            function clickByClassClose() {
-                var selectors = [
-                    '[class*="close" i]', '[id*="close" i]',
-                    '[class*="dismiss" i]', '[id*="dismiss" i]',
-                    '[aria-label*="close" i]', '[aria-label*="закрыть" i]',
-                    '[title*="close" i]', '[title*="закрыть" i]',
-                    '[data-action*="close" i]', '[data-dismiss]'
-                ];
-                for (var s = 0; s < selectors.length; s++) {
-                    try {
-                        var list = document.querySelectorAll(selectors[s]);
-                        for (var i = 0; i < list.length; i++) {
-                            var el = list[i];
-                            if (isVisible(el)) {
-                                hardClick(el);
-                                hideAncestorOverlay(el);
-                            }
-                        }
-                    } catch(e) {}
                 }
             }
 
@@ -348,7 +429,69 @@ struct WebView: UIViewRepresentable {
                     if (Math.abs(r.width - r.height) > 15) continue;
                     hardClick(svg);
                     if (svg.parentElement) hardClick(svg.parentElement);
-                    hideAncestorOverlay(svg);
+                    forceHide(svg);
+                    if (svg.parentElement) forceHide(svg.parentElement);
+                    hideAncestorOverlay(svg, 10);
+                }
+            }
+
+            function clickAdCornerButtons() {
+                var candidates = document.querySelectorAll('div, section, aside');
+                for (var i = 0; i < candidates.length; i++) {
+                    var c = candidates[i];
+                    if (c.getAttribute('data-adblock-hidden')) continue;
+                    var st = window.getComputedStyle(c);
+                    if (st.position !== 'fixed' && st.position !== 'absolute') continue;
+                    var z = parseInt(st.zIndex) || 0;
+                    if (z < 100) continue;
+                    var cr = c.getBoundingClientRect();
+                    if (cr.width < 80 || cr.height < 50) continue;
+                    if (cr.top > window.innerHeight || cr.bottom < 0) continue;
+
+                    var corners = [
+                        {x: cr.right, y: cr.top, area: 130},
+                        {x: cr.right, y: cr.bottom, area: 130}
+                    ];
+                    var inner = c.querySelectorAll('button, a, span, div, svg, i');
+                    for (var j = 0; j < inner.length; j++) {
+                        var el = inner[j];
+                        if (!isVisible(el)) continue;
+                        if (el.children.length > 2) continue;
+                        var r = el.getBoundingClientRect();
+                        if (r.width < 15 || r.width > 80) continue;
+                        if (r.height < 15 || r.height > 80) continue;
+                        if (Math.abs(r.width - r.height) > 20) continue;
+                        var cx = r.left + r.width / 2;
+                        var cy = r.top + r.height / 2;
+                        for (var k = 0; k < corners.length; k++) {
+                            var cor = corners[k];
+                            if (Math.hypot(cx - cor.x, cy - cor.y) < cor.area) {
+                                hardClick(el);
+                                forceHide(el);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            function hideEmptyOverlays() {
+                var candidates = document.querySelectorAll('div, section, aside, span');
+                for (var i = 0; i < candidates.length; i++) {
+                    var el = candidates[i];
+                    if (el.getAttribute('data-adblock-hidden')) continue;
+                    var st = window.getComputedStyle(el);
+                    if (st.position !== 'fixed' && st.position !== 'absolute') continue;
+                    var z = parseInt(st.zIndex) || 0;
+                    if (z < 500) continue;
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 40 || r.height < 40) continue;
+                    var hasPlayer = el.querySelectorAll('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]').length > 0;
+                    if (hasPlayer) continue;
+                    var textLen = (el.textContent || '').trim().length;
+                    if (textLen < 30) {
+                        forceHide(el);
+                    }
                 }
             }
 
@@ -360,10 +503,14 @@ struct WebView: UIViewRepresentable {
                     injectStyle();
                     removeScripts();
                     hideAdMedia();
+                    hideStickyBottomAds();
+                    hideFixedBottomElements();
+                    hideInlineFixedBottom();
+                    clickAllCloseButtons();
                     clickByTextClose();
-                    clickByClassClose();
                     clickSvgClose();
-                    closeAdByProximity();
+                    clickAdCornerButtons();
+                    hideEmptyOverlays();
                 } finally {
                     isRunning = false;
                 }
@@ -380,12 +527,27 @@ struct WebView: UIViewRepresentable {
 
             try {
                 var observer = new MutationObserver(scheduleRun);
-                observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+                observer.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['class', 'style', 'id']
+                });
             } catch(e) {}
 
-            // Частые прогоны в первые секунды, реже — дальше
+            // Скролл и ресайз: нижние sticky-баннеры часто появляются/пересоздаются при скролле
+            var scrollTimer = null;
+            function onScrollOrResize() {
+                if (scrollTimer) clearTimeout(scrollTimer);
+                scrollTimer = setTimeout(runAll, 150);
+            }
+            try {
+                window.addEventListener('scroll', onScrollOrResize, { passive: true });
+                window.addEventListener('resize', onScrollOrResize, { passive: true });
+            } catch(e) {}
+
             var delays = [80, 150, 300, 500, 800, 1200, 1800, 2500, 3500, 5000,
-                          7000, 10000, 15000, 22000, 30000];
+                          7000, 10000, 15000, 22000, 30000, 45000, 60000];
             delays.forEach(function(d) { setTimeout(runAll, d); });
         })();
         """
@@ -435,7 +597,6 @@ struct WebView: UIViewRepresentable {
             ])
         }
         
-        // URL-фильтры по ключевым словам — блокируют рекламу на любом домене
         let urlPatterns = [
             ".*pinco.*",
             ".*kysh.*",
@@ -443,7 +604,10 @@ struct WebView: UIViewRepresentable {
             ".*bahis.*",
             ".*kazanmak.*",
             ".*pincogames.*",
-            ".*b5c1d2e8c9982e3b965a27ac72ru7284cc.*"
+            ".*b5c1d2e8c9982e3b965a27ac72ru7284cc.*",
+            ".*sticky-ad.*",
+            ".*floor-banner.*",
+            ".*mobile-bottom-ad.*"
         ]
         for pattern in urlPatterns {
             rulesArray.append([
@@ -457,7 +621,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v4"
+        let identifier = "AdBlockRules_v6"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -468,7 +632,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v4 загружены (\(rulesArray.count) шт.)")
+                print("Правила v6 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
