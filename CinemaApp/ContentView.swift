@@ -64,6 +64,18 @@ struct WebView: UIViewRepresentable {
             window.prompt = function() { return null; };
 
             var HIDE_STYLE_ID = '__adblock_style__';
+            var AD_URL_KEYWORDS = ['pinco', 'kysh', 'promocode', 'bahis', 'kazanmak',
+                                   'b5c1d2e8c9982e3b965a27ac72ru7284cc', 'pincogames',
+                                   'kasino', 'casino', 'betting', 'bet'];
+
+            function urlIsAd(url) {
+                if (!url) return false;
+                url = url.toLowerCase();
+                for (var i = 0; i < AD_URL_KEYWORDS.length; i++) {
+                    if (url.indexOf(AD_URL_KEYWORDS[i]) !== -1) return true;
+                }
+                return false;
+            }
 
             function isVisible(el) {
                 if (!el || !el.getBoundingClientRect) return false;
@@ -75,11 +87,30 @@ struct WebView: UIViewRepresentable {
                 return true;
             }
 
-            function simulateClick(el) {
+            // Агрессивный клик: pointer + touch + mouse + .click()
+            function hardClick(el) {
+                if (!el) return;
+                try {
+                    var opts = { bubbles: true, cancelable: true, view: window };
+                    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+                    el.dispatchEvent(new PointerEvent('pointerup', opts));
+                } catch(e) {}
+                try {
+                    var tOpts = { bubbles: true, cancelable: true, view: window };
+                    el.dispatchEvent(new TouchEvent('touchstart', tOpts));
+                    el.dispatchEvent(new TouchEvent('touchend', tOpts));
+                } catch(e) {}
                 try {
                     ['mousedown','mouseup','click'].forEach(function(t) {
                         el.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
                     });
+                } catch(e) {}
+                try {
+                    if (typeof el.click === 'function') el.click();
+                } catch(e) {}
+                // Обход onclick напрямую
+                try {
+                    if (el.onclick) el.onclick.call(el, new MouseEvent('click'));
                 } catch(e) {}
             }
 
@@ -100,7 +131,7 @@ struct WebView: UIViewRepresentable {
                     iframe[src*="b5c1d2e8c9982e3b965a27ac72ru7284cc"],
                     [src*="pinco_banner"], [href*="pinco_banner"],
                     [src*="kysh"], [class*="kysh"], [id*="kysh"],
-                    [src*="pincogames"], [src*="promocode"],
+                    [src*="promocode"], [class*="promocode"],
                     a[href*="bahis"], a[href*="kazanmak"], a[href*="kazan"] {
                         display: none !important;
                         visibility: hidden !important;
@@ -123,41 +154,146 @@ struct WebView: UIViewRepresentable {
                 var scripts = document.getElementsByTagName('script');
                 for (var i = scripts.length - 1; i >= 0; i--) {
                     var src = scripts[i].src;
-                    if (src && (src.includes('ads') || src.includes('banner') || src.includes('pop') ||
-                                src.includes('promo') || src.includes('pinco') ||
-                                src.includes('kysh') || src.includes('bahis') ||
-                                src.includes('b5c1d2e8c9982e3b965a27ac72ru7284cc'))) {
+                    if (src && urlIsAd(src)) {
                         scripts[i].parentNode.removeChild(scripts[i]);
                     }
                 }
             }
 
-            // Прячем <img>, которые не загрузились (заблокированы на уровне сети)
-            function hideBrokenImages() {
-                var imgs = document.querySelectorAll('img');
-                for (var i = 0; i < imgs.length; i++) {
-                    var img = imgs[i];
-                    var src = (img.getAttribute('src') || '').toLowerCase();
-                    var isAdSource = src.indexOf('pinco') !== -1 ||
-                                     src.indexOf('kysh') !== -1 ||
-                                     src.indexOf('b5c1d2e8c9982e3b965a27ac72ru7284cc') !== -1 ||
-                                     src.indexOf('promocode') !== -1;
-                    var isBroken = img.complete && img.naturalWidth === 0;
-                    if (isAdSource || isBroken) {
-                        img.style.display = 'none';
-                        // Скрываем родителя, если он почти пустой
-                        var p = img.parentElement;
+            // Скрываем все <img> и <iframe> с рекламными URL + их оверлеи
+            function hideAdMedia() {
+                var media = document.querySelectorAll('img, iframe, video, embed, object');
+                for (var i = 0; i < media.length; i++) {
+                    var el = media[i];
+                    var src = (el.getAttribute('src') || el.getAttribute('data-src') || '').toLowerCase();
+                    var isBroken = el.tagName === 'IMG' && el.complete && el.naturalWidth === 0;
+                    if (urlIsAd(src) || isBroken) {
+                        el.style.display = 'none';
+                        el.style.visibility = 'hidden';
+                        // Поднимаемся до родителя-оверлея и скрываем его целиком
+                        var p = el.parentElement;
                         var depth = 0;
-                        while (p && depth < 4) {
-                            var textLen = (p.textContent || '').trim().length;
-                            var otherContent = p.querySelectorAll('img:not([style*="display: none"]), iframe, video, canvas').length;
-                            if (textLen < 20 && otherContent === 0) {
+                        while (p && depth < 8) {
+                            var st = window.getComputedStyle(p);
+                            var r = p.getBoundingClientRect();
+                            // Если родитель крупный и позиционированный — скрываем его
+                            if ((st.position === 'fixed' || st.position === 'absolute') && r.width > 100 && r.height > 50) {
                                 p.style.display = 'none';
+                                p.style.visibility = 'hidden';
+                                p.style.pointerEvents = 'none';
+                                break;
                             }
                             p = p.parentElement;
                             depth++;
                         }
                     }
+                }
+            }
+
+            // Ищем крестики ТОЛЬКО по тексту × ✕ X — быстрый путь
+            function clickByTextClose() {
+                if (!document.body) return;
+                var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                var targets = ['×','✕','✖','⨯','✗','X','x','Х','х','ⓧ','❌','❎'];
+                var node;
+                while ((node = walker.nextNode())) {
+                    var t = (node.nodeValue || '').trim();
+                    if (t.length === 0 || t.length > 3) continue;
+                    if (targets.indexOf(t) === -1) continue;
+                    var el = node.parentElement;
+                    if (!el) continue;
+                    var clickable = el;
+                    var depth = 0;
+                    while (clickable && depth < 5) {
+                        var st = window.getComputedStyle(clickable);
+                        if (st.cursor === 'pointer' || clickable.tagName === 'BUTTON' ||
+                            clickable.tagName === 'A' || clickable.onclick ||
+                            clickable.getAttribute('role') === 'button') break;
+                        clickable = clickable.parentElement;
+                        depth++;
+                    }
+                    var target = clickable || el;
+                    if (isVisible(target)) {
+                        hardClick(target);
+                        hideAncestorOverlay(target);
+                    }
+                }
+            }
+
+            // Главный метод: ищем рекламу и в её правом верхнем углу — крестик
+            function closeAdByProximity() {
+                // 1. Находим все рекламные контейнеры
+                var adContainers = [];
+                var allMedia = document.querySelectorAll('img, iframe');
+                for (var i = 0; i < allMedia.length; i++) {
+                    var m = allMedia[i];
+                    var src = (m.getAttribute('src') || '').toLowerCase();
+                    if (!urlIsAd(src)) continue;
+                    // Поднимаемся до позиционированного контейнера
+                    var p = m.parentElement;
+                    var depth = 0;
+                    while (p && depth < 10) {
+                        var st = window.getComputedStyle(p);
+                        if (st.position === 'fixed' || st.position === 'absolute') {
+                            var r = p.getBoundingClientRect();
+                            if (r.width > 100 && r.height > 50 && r.top >= 0 && r.top < window.innerHeight) {
+                                adContainers.push(p);
+                            }
+                            break;
+                        }
+                        p = p.parentElement;
+                        depth++;
+                    }
+                }
+
+                // 2. Для каждого рекламного контейнера ищем крестик в правом верхнем углу
+                for (var c = 0; c < adContainers.length; c++) {
+                    var container = adContainers[c];
+                    var rect = container.getBoundingClientRect();
+                    var searchArea = {
+                        left: rect.right - 120,
+                        right: rect.right + 20,
+                        top: rect.top - 20,
+                        bottom: rect.top + 120
+                    };
+
+                    // Обходим всё внутри родителя и ищем небольшой квадратный кликабельный элемент
+                    var parent = container.parentElement || document.body;
+                    var all = parent.querySelectorAll('*');
+                    var bestBtn = null;
+                    var bestScore = Infinity;
+                    for (var j = 0; j < all.length; j++) {
+                        var el = all[j];
+                        if (!isVisible(el)) continue;
+                        if (el.children.length > 3) continue; // крестик — лист или почти лист
+                        var r = el.getBoundingClientRect();
+                        // Крестик: небольшой (20–80px), почти квадратный
+                        if (r.width < 15 || r.width > 100) continue;
+                        if (r.height < 15 || r.height > 100) continue;
+                        if (Math.abs(r.width - r.height) > 20) continue;
+                        // В области правого верхнего угла рекламы
+                        var cx = r.left + r.width / 2;
+                        var cy = r.top + r.height / 2;
+                        if (cx < searchArea.left || cx > searchArea.right) continue;
+                        if (cy < searchArea.top || cy > searchArea.bottom) continue;
+                        // Чем ближе к углу — тем лучше
+                        var dist = Math.hypot(cx - rect.right, cy - rect.top);
+                        if (dist < bestScore) {
+                            bestScore = dist;
+                            bestBtn = el;
+                        }
+                    }
+                    if (bestBtn) {
+                        hardClick(bestBtn);
+                        // Иногда крестик внутри <button> или <a>
+                        var wrap = bestBtn.closest('button, a, [role="button"]');
+                        if (wrap && wrap !== bestBtn) hardClick(wrap);
+                    }
+
+                    // 3. В любом случае скрываем сам контейнер с рекламой
+                    container.style.display = 'none';
+                    container.style.visibility = 'hidden';
+                    container.style.pointerEvents = 'none';
                 }
             }
 
@@ -180,49 +316,13 @@ struct WebView: UIViewRepresentable {
                 return false;
             }
 
-            // Ищем крестики как текстовые узлы через TreeWalker — находит в любой вложенности
-            function clickByTextClose() {
-                if (!document.body) return;
-                var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
-                var targets = ['×','✕','✖','⨯','✗','X','x','Х','х','ⓧ','❌','❎','❌'];
-                var node;
-                while ((node = walker.nextNode())) {
-                    var t = (node.nodeValue || '').trim();
-                    if (t.length === 0 || t.length > 3) continue;
-                    if (targets.indexOf(t) === -1) continue;
-                    var el = node.parentElement;
-                    if (!el) continue;
-                    // Кликаем по самому кликабельному родителю
-                    var clickable = el;
-                    var depth = 0;
-                    while (clickable && depth < 4) {
-                        var st = window.getComputedStyle(clickable);
-                        if (st.cursor === 'pointer' || clickable.tagName === 'BUTTON' || clickable.tagName === 'A' || clickable.onclick) {
-                            break;
-                        }
-                        clickable = clickable.parentElement;
-                        depth++;
-                    }
-                    var target = clickable || el;
-                    if (isVisible(target)) {
-                        simulateClick(target);
-                        hideAncestorOverlay(target);
-                    }
-                }
-            }
-
-            // Ищем элементы по классам/атрибутам close
             function clickByClassClose() {
                 var selectors = [
                     '[class*="close" i]', '[id*="close" i]',
                     '[class*="dismiss" i]', '[id*="dismiss" i]',
                     '[aria-label*="close" i]', '[aria-label*="закрыть" i]',
                     '[title*="close" i]', '[title*="закрыть" i]',
-                    '[data-action*="close" i]', '[data-dismiss]',
-                    '[class*="cerrar" i]', '[class*="schliessen" i]',
-                    'svg[class*="close" i]', 'svg[class*="x" i]',
-                    'button[class*="x" i]', 'a[class*="x" i]',
-                    'button[aria-label*="x" i]'
+                    '[data-action*="close" i]', '[data-dismiss]'
                 ];
                 for (var s = 0; s < selectors.length; s++) {
                     try {
@@ -230,7 +330,7 @@ struct WebView: UIViewRepresentable {
                         for (var i = 0; i < list.length; i++) {
                             var el = list[i];
                             if (isVisible(el)) {
-                                simulateClick(el);
+                                hardClick(el);
                                 hideAncestorOverlay(el);
                             }
                         }
@@ -238,39 +338,17 @@ struct WebView: UIViewRepresentable {
                 }
             }
 
-            // Ищем иконки-X, реализованные через SVG
             function clickSvgClose() {
                 var svgs = document.querySelectorAll('svg');
                 for (var i = 0; i < svgs.length; i++) {
                     var svg = svgs[i];
                     if (!isVisible(svg)) continue;
                     var r = svg.getBoundingClientRect();
-                    // Крестик обычно квадратный и небольшой
-                    if (r.width > 80 || r.height > 80) continue;
-                    if (Math.abs(r.width - r.height) > 10) continue;
-                    // Кликаем по SVG и по его родителю
-                    simulateClick(svg);
-                    if (svg.parentElement) simulateClick(svg.parentElement);
+                    if (r.width > 90 || r.height > 90) continue;
+                    if (Math.abs(r.width - r.height) > 15) continue;
+                    hardClick(svg);
+                    if (svg.parentElement) hardClick(svg.parentElement);
                     hideAncestorOverlay(svg);
-                }
-            }
-
-            // Прячем пустые оверлеи с высоким z-index
-            function hideEmptyOverlays() {
-                var candidates = document.querySelectorAll('div, section, aside, span');
-                for (var i = 0; i < candidates.length; i++) {
-                    var el = candidates[i];
-                    var st = window.getComputedStyle(el);
-                    if (st.position !== 'fixed' && st.position !== 'absolute') continue;
-                    var z = parseInt(st.zIndex) || 0;
-                    if (z < 500) continue;
-                    var r = el.getBoundingClientRect();
-                    if (r.width < 50 || r.height < 50) continue;
-                    // Если внутри только картинка/скрипт/крестик — прячем
-                    var hasUsefulContent = el.querySelectorAll('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]').length > 0;
-                    if (hasUsefulContent) continue;
-                    el.style.display = 'none';
-                    el.style.pointerEvents = 'none';
                 }
             }
 
@@ -281,11 +359,11 @@ struct WebView: UIViewRepresentable {
                 try {
                     injectStyle();
                     removeScripts();
-                    hideBrokenImages();
+                    hideAdMedia();
                     clickByTextClose();
                     clickByClassClose();
                     clickSvgClose();
-                    hideEmptyOverlays();
+                    closeAdByProximity();
                 } finally {
                     isRunning = false;
                 }
@@ -297,18 +375,18 @@ struct WebView: UIViewRepresentable {
             function scheduleRun() {
                 if (pending) return;
                 pending = true;
-                setTimeout(function() { pending = false; runAll(); }, 300);
+                setTimeout(function() { pending = false; runAll(); }, 250);
             }
 
             try {
                 var observer = new MutationObserver(scheduleRun);
-                observer.observe(document.documentElement, { childList: true, subtree: true });
+                observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
             } catch(e) {}
 
-            var delays = [100, 300, 600, 1000, 2000, 4000, 8000, 15000, 30000];
-            delays.forEach(function(d) {
-                setTimeout(runAll, d);
-            });
+            // Частые прогоны в первые секунды, реже — дальше
+            var delays = [80, 150, 300, 500, 800, 1200, 1800, 2500, 3500, 5000,
+                          7000, 10000, 15000, 22000, 30000];
+            delays.forEach(function(d) { setTimeout(runAll, d); });
         })();
         """
         let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -346,7 +424,6 @@ struct WebView: UIViewRepresentable {
         
         var rulesArray: [[String: Any]] = []
         
-        // Домен + все поддомены: пишем два правила (exact и wildcard)
         for domain in blockedDomains {
             rulesArray.append([
                 "trigger": ["url-filter": ".*", "if-domain": [domain]],
@@ -358,16 +435,17 @@ struct WebView: UIViewRepresentable {
             ])
         }
         
-        // Явная блокировка любых рекламных баннеров pinco/kysh любых форматов
-        let bannerPatterns = [
-            ".*pinco_banner.*",
-            ".*pinco.*\\.(jpg|jpeg|png|gif|webp|svg|mp4)",
-            ".*kysh.*\\.(jpg|jpeg|png|gif|webp|svg|mp4)",
-            ".*promocode.*\\.(jpg|jpeg|png|gif|webp|svg)",
+        // URL-фильтры по ключевым словам — блокируют рекламу на любом домене
+        let urlPatterns = [
+            ".*pinco.*",
+            ".*kysh.*",
+            ".*promocode.*",
             ".*bahis.*",
-            ".*kazanmak.*"
+            ".*kazanmak.*",
+            ".*pincogames.*",
+            ".*b5c1d2e8c9982e3b965a27ac72ru7284cc.*"
         ]
-        for pattern in bannerPatterns {
+        for pattern in urlPatterns {
             rulesArray.append([
                 "trigger": ["url-filter": pattern],
                 "action": ["type": "block"]
@@ -379,8 +457,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        // Меняем идентификатор при каждом изменении, чтобы не подтянулся старый кэш
-        let identifier = "AdBlockRules_v3"
+        let identifier = "AdBlockRules_v4"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -391,7 +468,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила блокировки v3 загружены (\(rulesArray.count) правил).")
+                print("Правила v4 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
