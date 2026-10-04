@@ -39,6 +39,119 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Generate App Icon
+        run: |
+          python3 -m pip install --quiet --user Pillow
+          mkdir -p CinemaApp/Assets.xcassets/AppIcon.appiconset
+
+          cat > CinemaApp/Assets.xcassets/Contents.json << 'JSONEOF'
+          {
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          JSONEOF
+
+          cat > CinemaApp/Assets.xcassets/AppIcon.appiconset/Contents.json << 'JSONEOF'
+          {
+            "images" : [
+              {
+                "filename" : "1024.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          JSONEOF
+
+          cat > /tmp/gen_icon.py << 'PYEOF'
+          from PIL import Image, ImageDraw, ImageFont
+
+          SIZE = 1024
+          img = Image.new('RGBA', (SIZE, SIZE), (25, 20, 45, 255))
+
+          # Золотой круг на фоне
+          circle = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          cd = ImageDraw.Draw(circle)
+          cd.ellipse([80, 80, 944, 944], fill=(255, 200, 60, 255))
+          img.alpha_composite(circle)
+
+          # Основа хлопушки (нижняя часть)
+          body = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          bd = ImageDraw.Draw(body)
+          bd.rounded_rectangle([180, 470, 844, 830], radius=45, fill=(20, 20, 30, 255))
+          img.alpha_composite(body)
+
+          # Верхняя часть с полосками
+          top = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          td = ImageDraw.Draw(top)
+          td.rounded_rectangle([180, 300, 844, 470], radius=45, fill=(245, 245, 245, 255))
+          for i in range(-3, 15):
+              x = 180 + i * 90
+              td.polygon([
+                  (x, 300),
+                  (x + 45, 300),
+                  (x + 45 - 120, 470),
+                  (x - 120, 470)
+              ], fill=(20, 20, 30, 255))
+
+          # Маска-скругление для верхней части
+          mask = Image.new('L', (SIZE, SIZE), 0)
+          md = ImageDraw.Draw(mask)
+          md.rounded_rectangle([180, 300, 844, 470], radius=45, fill=255)
+          r, g, b, a = top.split()
+          clipped = Image.composite(a, Image.new('L', (SIZE, SIZE), 0), mask)
+          top.putalpha(clipped)
+          img.alpha_composite(top)
+
+          # Золотая обводка
+          outline = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          od = ImageDraw.Draw(outline)
+          od.rounded_rectangle([180, 300, 844, 470], radius=45, outline=(255, 200, 60, 255), width=10)
+          od.rounded_rectangle([180, 470, 844, 830], radius=45, outline=(255, 200, 60, 255), width=10)
+          img.alpha_composite(outline)
+
+          # Петля-шарнир слева
+          hinge = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          hd = ImageDraw.Draw(hinge)
+          hd.ellipse([210, 440, 290, 520], fill=(255, 200, 60, 255))
+          hd.ellipse([235, 465, 265, 495], fill=(20, 20, 30, 255))
+          img.alpha_composite(hinge)
+
+          # Надпись KINO
+          text = Image.new('RGBA', (SIZE, SIZE), (0, 0, 0, 0))
+          textd = ImageDraw.Draw(text)
+          font = None
+          for font_path in [
+              "/System/Library/Fonts/Helvetica.ttc",
+              "/System/Library/Fonts/HelveticaNeue.ttc",
+              "/System/Library/Fonts/SFNS.ttf"
+          ]:
+              try:
+                  font = ImageFont.truetype(font_path, 160)
+                  break
+              except Exception:
+                  continue
+          if font is None:
+              font = ImageFont.load_default()
+          textd.text((512, 660), "KINO", fill=(255, 200, 60, 255), anchor="mm", font=font)
+          img.alpha_composite(text)
+
+          # Финальный RGB
+          final = Image.new('RGB', (SIZE, SIZE), (25, 20, 45))
+          final.paste(img, (0, 0), img.split()[3])
+          final.save('CinemaApp/Assets.xcassets/AppIcon.appiconset/1024.png')
+          print('Иконка успешно сгенерирована.')
+          PYEOF
+
+          python3 /tmp/gen_icon.py
+
       - name: Generate Xcode project
         run: xcodegen generate
 
@@ -58,8 +171,10 @@ jobs:
         run: |
           mkdir -p Payload
           APP_PATH=$(find ./build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+          echo "Найден .app: $APP_PATH"
           cp -R "$APP_PATH" Payload/
           zip -qr CinemaApp.ipa Payload
+          ls -lh CinemaApp.ipa
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
