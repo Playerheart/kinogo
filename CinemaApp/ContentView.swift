@@ -56,6 +56,7 @@ struct WebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
+        // JS скрипт, уничтожающий прилипающие нижние баннеры и кликающий крестики
         let js = """
         (function() {
             window.open = function() { return null; };
@@ -63,114 +64,101 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            function autoClickAndDestroy() {
-                var allElements = document.querySelectorAll('div, section, aside, footer, iframe');
-                for (var i = 0; i < allElements.length; i++) {
-                    var el = allElements[i];
+            function killStickyBottomBanners() {
+                var elements = document.querySelectorAll('div, section, aside, footer, p, iframe, a');
+                var screenHeight = window.innerHeight || document.documentElement.clientHeight;
+                var screenWidth = window.innerWidth || document.documentElement.clientWidth;
+
+                for (var i = 0; i < elements.length; i++) {
+                    var el = elements[i];
                     
-                    // Защита: не трогаем плееры и видео
+                    // Защита: пропускаем видеоплеер
                     if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) {
+                        continue;
+                    }
+                    if (el.tagName === 'IFRAME' && (el.src.indexOf('kodik') !== -1 || el.src.indexOf('alloha') !== -1 || el.src.indexOf('videocdn') !== -1)) {
                         continue;
                     }
 
                     var style = window.getComputedStyle(el);
-                    if (style.position === 'fixed' || style.position === 'sticky') {
+                    var isFixedOrSticky = style.position === 'fixed' || style.position === 'sticky';
+
+                    if (isFixedOrSticky) {
                         var rect = el.getBoundingClientRect();
                         
-                        // Проверяем, находится ли элемент внизу экрана
-                        var isAtBottom = (window.innerHeight - rect.bottom) < 60 || (rect.bottom > window.innerHeight - 120 && rect.top > window.innerHeight - 300);
-                        
-                        if (isAtBottom && rect.height > 20 && rect.height < 400) {
-                            var html = (el.innerHTML || '').toLowerCase();
-                            
-                            // Сигнатуры рекламных баннеров Pinco / Casino / Акций
-                            var isAdContent = html.indexOf('pinco') !== -1 || 
-                                              html.indexOf('kysh') !== -1 || 
-                                              html.indexOf('2 500 000') !== -1 || 
-                                              html.indexOf('bahis') !== -1 || 
-                                              html.indexOf('250 fs') !== -1 ||
-                                              html.indexOf('промокод') !== -1 ||
-                                              html.indexOf('promocode') !== -1;
-                            
-                            if (isAdContent) {
-                                // 1. Ищем и кликаем по всем кнопкам закрытия/крестикам
-                                var closeButtons = el.querySelectorAll('button, a, div, span, svg, path, i');
-                                for (var j = 0; j < closeButtons.length; j++) {
-                                    var btn = closeButtons[j];
-                                    var btnRect = btn.getBoundingClientRect();
-                                    var btnText = (btn.textContent || '').trim();
-                                    var btnClass = (btn.className || '').toString().toLowerCase();
-                                    
-                                    var isCloseSymbol = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(btnText) !== -1;
-                                    var isCloseClass = btnClass.indexOf('close') !== -1 || btnClass.indexOf('cross') !== -1;
-                                    var isCornerBtn = btnRect.width > 0 && btnRect.width <= 60 && btnRect.height <= 60;
+                        // Если элемент находится в нижней 25% части экрана и имеет высоту меньше 350px (типичный плавающий баннер)
+                        var isAtBottom = (rect.bottom >= screenHeight - 50) && (rect.top > screenHeight * 0.5);
+                        var isBannerSize = rect.height > 20 && rect.height < 350 && rect.width > (screenWidth * 0.5);
 
-                                    if ((isCloseSymbol || isCloseClass || isCornerBtn) && btnRect.width > 0) {
-                                        try {
-                                            btn.click();
-                                            btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                            btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
-                                            btn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
-                                        } catch(e) {}
-                                    }
-                                }
+                        if (isAtBottom && isBannerSize) {
+                            
+                            // 1. Ищем внутри этого контейнера кнопку-крестик и кликаем по ней
+                            var targets = el.querySelectorAll('*');
+                            for (var j = 0; j < targets.length; j++) {
+                                var child = targets[j];
+                                var cText = (child.textContent || '').trim();
+                                var cClass = (child.className || '').toString().toLowerCase();
+                                var cRect = child.getBoundingClientRect();
 
-                                // 2. Принудительно скрываем и удаляем сам контейнер
-                                el.style.setProperty('display', 'none', 'important');
-                                el.style.setProperty('visibility', 'hidden', 'important');
-                                el.style.setProperty('height', '0px', 'important');
-                                if (el.parentNode) {
-                                    el.parentNode.removeChild(el);
+                                var isXMark = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(cText) !== -1;
+                                var isCloseClass = cClass.indexOf('close') !== -1 || cClass.indexOf('cross') !== -1;
+                                var isSmallRoundBtn = cRect.width > 15 && cRect.width < 60 && cRect.height > 15 && cRect.height < 60;
+
+                                if (isXMark || isCloseClass || isSmallRoundBtn) {
+                                    try {
+                                        child.click();
+                                        child.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                                        child.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+                                        child.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+                                    } catch(e) {}
                                 }
+                            }
+
+                            // 2. Уничтожаем сам баннер из DOM структуры
+                            el.style.setProperty('display', 'none', 'important');
+                            el.style.setProperty('visibility', 'hidden', 'important');
+                            el.style.setProperty('opacity', '0', 'important');
+                            el.style.setProperty('pointer-events', 'none', 'important');
+                            if (el.parentNode) {
+                                el.parentNode.removeChild(el);
                             }
                         }
                     }
                 }
             }
 
-            function cleanAdIframes() {
-                var iframes = document.querySelectorAll('iframe, div[id*="ad"], div[class*="ad"]');
-                for (var i = 0; i < iframes.length; i++) {
-                    var item = iframes[i];
-                    var src = (item.src || item.getAttribute('src') || '').toLowerCase();
-                    if (src.indexOf('pinco') !== -1 || src.indexOf('b5c1d2e8c9982e3b965a27ac72ru7284cc') !== -1) {
-                        if (item.parentNode) {
-                            item.parentNode.removeChild(item);
-                        }
-                    }
+            // Быстрый запуск и постоянное слежение
+            killStickyBottomBanners();
+
+            var observer = new MutationObserver(function() {
+                killStickyBottomBanners();
+            });
+
+            function startObserver() {
+                if (document.body) {
+                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
                 }
             }
 
-            function runCleaner() {
-                autoClickAndDestroy();
-                cleanAdIframes();
-            }
-
-            runCleaner();
-            
-            var observer = new MutationObserver(function() {
-                runCleaner();
-            });
-
-            if (document.body) {
-                observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', startObserver);
             } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-                });
+                startObserver();
             }
 
-            var intervals = [100, 250, 500, 800, 1200, 2000, 3500, 5000];
-            intervals.forEach(function(t) {
-                setTimeout(runCleaner, t);
+            // Периодическая зачистка (на случай задержек скриптов рекламной сети)
+            var timerIds = [100, 300, 500, 1000, 1500, 2500, 4000, 6000];
+            timerIds.forEach(function(ms) {
+                setTimeout(killStickyBottomBanners, ms);
             });
 
-            window.addEventListener('scroll', runCleaner, { passive: true });
-            window.addEventListener('resize', runCleaner, { passive: true });
+            window.addEventListener('scroll', killStickyBottomBanners, { passive: true });
+            window.addEventListener('resize', killStickyBottomBanners, { passive: true });
         })();
         """
         
-        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        // Внедряем скрипт сразу при старте загрузки документа
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
         
         compileAdBlockRules(for: config.userContentController)
@@ -240,7 +228,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v7"
+        let identifier = "AdBlockRules_v8"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -251,7 +239,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v7 загружены (\(rulesArray.count) шт.)")
+                print("Правила v8 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
