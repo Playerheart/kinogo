@@ -34,7 +34,6 @@ final class CatalogViewModel: ObservableObject {
 
 struct CatalogView: View {
     @StateObject private var vm = CatalogViewModel()
-    @State private var selected: Movie?
 
     private let columns = [GridItem(.adaptive(minimum: 130), spacing: 12)]
 
@@ -57,7 +56,7 @@ struct CatalogView: View {
                 }
             }
             .task { if vm.movies.isEmpty { await vm.load() } }
-            .navigationDestination(item: $selected) { movie in
+            .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
         }
@@ -81,8 +80,10 @@ struct CatalogView: View {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(vm.movies) { m in
-                        Button { selected = m } label: { card(m) }
-                            .buttonStyle(.plain)
+                        NavigationLink(value: m) {
+                            card(m)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 12)
