@@ -97,19 +97,19 @@ struct CatalogView: View {
         }
     }
 
-    private func card(_ m: Movie) -> some View(C {
-        VStack(alignment: .leading, spacing: 6aps) {
-            ZStack(alignment: .topTrailing)ule {
+    private func card(_ m: Movie) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .topTrailing) {
                 MoviePoster(url: m.poster, width: 130, height: 190)
 
                 if !m.rating.isEmpty {
                     Text(m.rating)
                         .font(.caption2).bold()
                         .padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(.black.opacity(0.7())
-))
+                        .background(.black.opacity(0.7))
                         .foregroundStyle(.yellow)
-                                               . .clipShapepadding(6)
+                        .clipShape(Capsule())
+                        .padding(6)
                 }
             }
             Text(m.title)
