@@ -20,7 +20,11 @@ final class CatalogViewModel: ObservableObject {
                 let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
                 url = URL(string: "\(base)/index.php?do=search&subaction=search&story=\(q)")!
             }
-            let json = try await SiteParser.shared.extract(from: url, js: ExtractionScripts.catalog)
+            let json = try await SiteParser.shared.extract(
+                from: url,
+                js: ExtractionScripts.catalog,
+                waitAfterLoad: 4.0
+            )
             guard let data = json.data(using: .utf8) else { throw ParserError.invalidResult }
             let parsed = try JSONDecoder().decode([Movie].self, from: data)
             self.movies = parsed
