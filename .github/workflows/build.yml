@@ -35,7 +35,6 @@ jobs:
           echo "build=$BUILD"       >> $GITHUB_OUTPUT
           echo "tag=$TAG"           >> $GITHUB_OUTPUT
           echo "date=$DATE"         >> $GITHUB_OUTPUT
-          echo "Собираем $TAG от $DATE"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -59,10 +58,8 @@ jobs:
         run: |
           mkdir -p Payload
           APP_PATH=$(find ./build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
-          echo "Найден .app: $APP_PATH"
           cp -R "$APP_PATH" Payload/
           zip -qr CinemaApp.ipa Payload
-          ls -lh CinemaApp.ipa
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
