@@ -41,7 +41,14 @@ jobs:
 
       - name: Generate App Icon
         run: |
-          python3 -m pip install --quiet --user Pillow
+          # Проверяем, есть ли Pillow в системном Python; если нет — ставим с флагом PEP 668
+          if ! python3 -c "import PIL" 2>/dev/null; then
+            echo "Pillow не найден, устанавливаем..."
+            python3 -m pip install --quiet --user --break-system-packages Pillow
+          else
+            echo "Pillow уже установлен."
+          fi
+
           mkdir -p CinemaApp/Assets.xcassets/AppIcon.appiconset
 
           cat > CinemaApp/Assets.xcassets/Contents.json << 'JSONEOF'
