@@ -16,7 +16,7 @@ final class SiteParser: NSObject {
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        // Скорость парсинга: блокируем картинки и медиа (нам нужен только HTML)
+        // Блокируем картинки, медиа и шрифты — нам нужен только HTML (для скорости)
         let blockHeavy: [String: Any] = [
             "trigger": ["url-filter": ".*", "resource-type": ["image", "media", "font"]],
             "action": ["type": "block"]
@@ -36,7 +36,7 @@ final class SiteParser: NSObject {
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     }
 
-    func extract(from url: URL, js: String, waitAfterLoad: TimeInterval = 2.0) async throws -> String {
+    func extract(from url: URL, js: String, waitAfterLoad: TimeInterval = 3.0) async throws -> String {
         if pendingCompletion != nil {
             pendingCompletion?(.failure(ParserError.cancelled))
             pendingCompletion = nil
@@ -52,7 +52,7 @@ final class SiteParser: NSObject {
 
             self.timeoutTask?.cancel()
             self.timeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 25_000_000_000)
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
                 guard let self = self, !self.loadSucceeded else { return }
                 self.pendingCompletion?(.failure(ParserError.timeout))
                 self.pendingCompletion = nil
@@ -83,7 +83,8 @@ extension SiteParser: WKNavigationDelegate {
         loadSucceeded = true
         timeoutTask?.cancel()
         guard let js = pendingJS else { return }
-        finishWithJS(js, wait: 2.5)
+        // Даём странице время: JS-скрипты рисуют карточки, ленивые картинки грузятся
+        finishWithJS(js, wait: 4.0)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
