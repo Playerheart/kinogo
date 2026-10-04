@@ -4,7 +4,8 @@ import SwiftUI
 struct CinemaApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            CatalogView()
+                .preferredColorScheme(.dark)
         }
     }
 }
