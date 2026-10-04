@@ -56,6 +56,7 @@ struct WebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
+        // Внедряем единый глобальный стилизатор, блокирующий баннеры на уровне макета без кликов
         let js = """
         (function() {
             window.open = function() { return null; };
@@ -63,70 +64,85 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            var clickCount = 0;      // Лимит: максимум 2 клика за страницу
-            var isCoolingDown = false; // Пауза между кликами, чтобы не сбивать скролл
+            // Добавляем глобальный CSS, глушащий фиксированные нижние блоки
+            var styleEl = document.createElement('style');
+            styleEl.innerHTML = `
+                div[style*="position: fixed"][style*="bottom: 0"],
+                div[style*="position:fixed"][style*="bottom:0"],
+                div[style*="position: fixed"][style*="bottom:0"],
+                div[style*="position:fixed"][style*="bottom: 0"],
+                [class*="sticky-banner"], [id*="sticky-banner"],
+                [class*="bottom-ad"], [id*="bottom-ad"],
+                [class*="floor-ad"], [id*="floor-ad"] {
+                    display: none !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                    height: 0 !important;
+                }
+            `;
+            (document.head || document.documentElement).appendChild(styleEl);
 
-            function tryControlledClose() {
-                if (clickCount >= 2 || isCoolingDown) return;
+            function purgeBottomBanners() {
+                var nodes = document.querySelectorAll('body > div, body > iframe, body > section');
+                var screenHeight = window.innerHeight || document.documentElement.clientHeight;
 
-                var w = window.innerWidth || document.documentElement.clientWidth;
-                var h = window.innerHeight || document.documentElement.clientHeight;
-
-                var checkPoints = [
-                    { x: w - 25, y: h - 35 },
-                    { x: w - 30, y: h - 40 },
-                    { x: w - 20, y: h - 30 }
-                ];
-
-                for (var i = 0; i < checkPoints.length; i++) {
-                    var pt = checkPoints[i];
-                    var el = document.elementFromPoint(pt.x, pt.y);
+                for (var i = 0; i < nodes.length; i++) {
+                    var el = nodes[i];
                     if (!el) continue;
 
-                    // Не затрагиваем плеер
-                    if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
+                    // Защищаем контейнер плеера
+                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"]')) {
+                        continue;
+                    }
+                    if (el.id === 'player' || el.className.indexOf('player') !== -1) {
                         continue;
                     }
 
-                    var txt = (el.textContent || '').trim();
-                    var cls = (el.className || '').toString().toLowerCase();
-                    var isX = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(txt) !== -1 || cls.indexOf('close') !== -1;
+                    var style = window.getComputedStyle(el);
+                    var isFixed = style.position === 'fixed' || style.position === 'sticky';
 
-                    if (isX || el.tagName === 'SVG' || el.tagName === 'PATH' || el.tagName === 'BUTTON' || el.tagName === 'SPAN' || el.tagName === 'DIV') {
-                        try {
-                            var opts = { bubbles: true, cancelable: true, view: window, clientX: pt.x, clientY: pt.y };
-                            el.dispatchEvent(new MouseEvent('click', opts));
-                            if (typeof el.click === 'function') el.click();
-                            
-                            clickCount++;
-                            isCoolingDown = true;
-
-                            // Скрываем сам контейнер
-                            var parentFixed = el.closest('div[style*="fixed"], div[style*="sticky"], .sticky-banner');
-                            if (parentFixed) {
-                                parentFixed.style.setProperty('display', 'none', 'important');
+                    if (isFixed) {
+                        var rect = el.getBoundingClientRect();
+                        // Если элемент прилип к нижней части экрана (bottom >= screenHeight - 20)
+                        if (rect.bottom >= screenHeight - 30 && rect.top > screenHeight * 0.4) {
+                            el.style.setProperty('display', 'none', 'important');
+                            el.style.setProperty('pointer-events', 'none', 'important');
+                            if (el.parentNode) {
+                                el.parentNode.removeChild(el);
                             }
-
-                            // Пауза 2 секунды перед тем, как разблокировать проверку на второй баннер
-                            setTimeout(function() {
-                                isCoolingDown = false;
-                            }, 2000);
-
-                            break;
-                        } catch(e) {}
+                        }
                     }
                 }
             }
 
-            // График точечных проверок (первая волна + проверка на второй баннер спустя паузу)
-            var schedule = [300, 600, 1000, 2000, 3500, 5000, 7000];
-            schedule.forEach(function(delay) {
-                setTimeout(tryControlledClose, delay);
+            // Безопасный наблюдатель за DOM без тапов и фокусов
+            var observer = new MutationObserver(function() {
+                purgeBottomBanners();
             });
+
+            function start() {
+                purgeBottomBanners();
+                if (document.body) {
+                    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+                }
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', start);
+            } else {
+                start();
+            }
+
+            // Дополнительная проверка при взаимодействии (без кликов)
+            window.addEventListener('scroll', purgeBottomBanners, { passive: true });
+            window.addEventListener('touchend', function() {
+                setTimeout(purgeBottomBanners, 100);
+            }, { passive: true });
         })();
         """
         
-        let userScript = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
         
         compileAdBlockRules(for: config.userContentController)
@@ -196,7 +212,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v11"
+        let identifier = "AdBlockRules_v12"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -207,7 +223,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v11 загружены (\(rulesArray.count) шт.)")
+                print("Правила v12 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
