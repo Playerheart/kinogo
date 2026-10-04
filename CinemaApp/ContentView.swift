@@ -16,11 +16,12 @@ struct ContentView: View {
             .edgesIgnoringSafeArea(.all)
             
             if isLoading {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.black.opacity(0.6))
+                ZStack {
+                    Color.black.opacity(0.5).edgesIgnoringSafeArea(.all)
+                    ProgressView()
+                        .scaleEffect(1.6)
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                }
             }
         }
         .sheet(isPresented: $showingShareSheet) {
@@ -58,16 +59,7 @@ struct WebView: UIViewRepresentable {
         
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // 1. Сначала компилируем правила блокировки
-        setupAdBlockRules(for: config.userContentController) {
-            // 2. И только ПОСЛЕ успешной компиляции загружаем сайт
-            DispatchQueue.main.async {
-                let request = URLRequest(url: targetURL)
-                // webView будет доступен здесь
-            }
-        }
-        
-        // 2. УСИЛЕННЫЙ JAVASCRIPT ДЛЯ ВЫЧИЩЕНИЯ DOM
+        // JavaScript для очистки DOM от рекламы
         let js = """
         (function() {
             window.open = function() { return null; };
@@ -127,25 +119,26 @@ struct WebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         
-        // Загружаем сайт сразу после создания webView,
-        // но с задержкой, чтобы правила успели примениться
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            let request = URLRequest(url: targetURL)
-            webView.load(request)
+        // Компилируем правила блокировки рекламы и только ПОСЛЕ этого грузим сайт.
+        // Это исправляет баг с белым экраном при первом запуске.
+        let targetURL = self.targetURL
+        compileAdBlockRules(for: config.userContentController) {
+            DispatchQueue.main.async {
+                webView.load(URLRequest(url: targetURL))
+            }
         }
         
         return webView
     }
     
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        // НЕ загружаем сайт здесь, чтобы не было повторных загрузок
-    }
+    // Не перезагружаем сайт при обновлении SwiftUI
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
     
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    private func setupAdBlockRules(for userContentController: WKUserContentController, completion: @escaping () -> Void) {
+    private func compileAdBlockRules(for controller: WKUserContentController, completion: @escaping () -> Void) {
         let blockedDomains = [
             "doubleclick.net", "googlesyndication.com", "googleadservices.com",
             "adsystem.com", "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
@@ -171,6 +164,7 @@ struct WebView: UIViewRepresentable {
             rulesArray.append(rule)
         }
         
+        // Блокировка конкретного баннера pinco по URL
         let specificBannerRule: [String: Any] = [
             "trigger": [
                 "url-filter": ".*pinco_banner.*\\.gif"
@@ -181,24 +175,35 @@ struct WebView: UIViewRepresentable {
         ]
         rulesArray.append(specificBannerRule)
         
-        if let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            
-            WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: "AdBlockRules",
-                encodedContentRuleList: jsonString
-            ) { (contentRuleList, error) in
-                if let error = error {
-                    print("Ошибка компиляции правил блокировки: \(error.localizedDescription)")
-                }
-                if let contentRuleList = contentRuleList {
-                    userContentController.add(contentRuleList)
-                    print("Правила блокировки рекламы успешно загружены.")
-                }
-                // Сообщаем, что можно грузить сайт
-                completion()
+        // Блокировка любых .gif с рекламных CDN
+        let gifBannerRule: [String: Any] = [
+            "trigger": [
+                "url-filter": ".*b5c1d2e8c9982e3b965a27ac72ru7284cc\\.com.*"
+            ],
+            "action": [
+                "type": "block"
+            ]
+        ]
+        rulesArray.append(gifBannerRule)
+        
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            completion()
+            return
+        }
+        
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "AdBlockRules",
+            encodedContentRuleList: jsonString
+        ) { (contentRuleList, error) in
+            if let error = error {
+                print("Ошибка компиляции правил блокировки: \(error.localizedDescription)")
             }
-        } else {
+            if let contentRuleList = contentRuleList {
+                controller.add(contentRuleList)
+                print("Правила блокировки рекламы успешно загружены.")
+            }
+            // Загружаем сайт только после применения правил
             completion()
         }
     }
@@ -210,20 +215,28 @@ struct WebView: UIViewRepresentable {
             self.parent = parent
         }
         
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            parent.isLoading = true
-        }
-        
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            parent.isLoading = false
+            if parent.isLoading {
+                DispatchQueue.main.async {
+                    self.parent.isLoading = false
+                }
+            }
         }
         
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            parent.isLoading = false
+            if parent.isLoading {
+                DispatchQueue.main.async {
+                    self.parent.isLoading = false
+                }
+            }
         }
         
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            parent.isLoading = false
+            if parent.isLoading {
+                DispatchQueue.main.async {
+                    self.parent.isLoading = false
+                }
+            }
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
