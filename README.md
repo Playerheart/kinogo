@@ -8,12 +8,12 @@
 | Параметр | Значение |
 |---|---|
 | **Версия** | `1.0` |
-| **Номер сборки** | `#5` |
-| **Дата** | 04.10.2026 13:55 UTC |
-| **Скачать IPA** | [**CinemaApp.ipa** ⬇](https://github.com/Playerheart/kinogo/releases/download/v1.0-build.5/CinemaApp.ipa) |
-| **Страница релиза** | [Открыть](https://github.com/Playerheart/kinogo/releases/tag/v1.0-build.5) |
+| **Номер сборки** | `#6` |
+| **Дата** | 04.10.2026 14:05 UTC |
+| **Скачать IPA** | [**CinemaApp.ipa** ⬇](https://github.com/Playerheart/kinogo/releases/download/v1.0-build.6/CinemaApp.ipa) |
+| **Страница релиза** | [Открыть](https://github.com/Playerheart/kinogo/releases/tag/v1.0-build.6) |
 
-> Прямая ссылка на файл — https://github.com/Playerheart/kinogo/releases/download/v1.0-build.5/CinemaApp.ipa
+> Прямая ссылка на файл — https://github.com/Playerheart/kinogo/releases/download/v1.0-build.6/CinemaApp.ipa
 >
 > Если она не открывается, перейдите в раздел [Releases](https://github.com/Playerheart/kinogo/releases) и выберите последнюю сборку вручную.
 <!-- IPA_INFO_END -->
