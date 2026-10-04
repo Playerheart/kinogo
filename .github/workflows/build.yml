@@ -1,0 +1,142 @@
+name: Build Unsigned IPA
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from Info.plist
+        id: ver
+        run: |
+          VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" CinemaApp/Info.plist)
+          BUILD=${{ github.run_number }}
+          TAG="v${VERSION}-build.${BUILD}"
+          DATE=$(date -u '+%d.%m.%Y %H:%M UTC')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD"       >> $GITHUB_OUTPUT
+          echo "tag=$TAG"           >> $GITHUB_OUTPUT
+          echo "date=$DATE"         >> $GITHUB_OUTPUT
+          echo "Собираем $TAG от $DATE"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project CinemaApp.xcodeproj \
+            -scheme CinemaApp \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath ./build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find ./build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+          echo "Найден .app: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -qr CinemaApp.ipa Payload
+          ls -lh CinemaApp.ipa
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: Кино ${{ steps.ver.outputs.version }} (build ${{ steps.ver.outputs.build }})
+          files: CinemaApp.ipa
+          body: |
+            **Версия:** `${{ steps.ver.outputs.version }}`
+            **Сборка:** `#${{ steps.ver.outputs.build }}`
+            **Дата:** ${{ steps.ver.outputs.date }}
+
+            **Скачать:** [CinemaApp.ipa](https://github.com/${{ github.repository }}/releases/download/${{ steps.ver.outputs.tag }}/CinemaApp.ipa)
+
+      - name: Update README with latest IPA info
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD:   ${{ steps.ver.outputs.build }}
+          TAG:     ${{ steps.ver.outputs.tag }}
+          DATE:    ${{ steps.ver.outputs.date }}
+          REPO:    ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, re, pathlib
+
+          v    = os.environ['VERSION']
+          b    = os.environ['BUILD']
+          tag  = os.environ['TAG']
+          date = os.environ['DATE']
+          repo = os.environ['REPO']
+
+          dl  = f"https://github.com/{repo}/releases/download/{tag}/CinemaApp.ipa"
+          rel = f"https://github.com/{repo}/releases/tag/{tag}"
+          all_rel = f"https://github.com/{repo}/releases"
+
+          block = f"""<!-- IPA_INFO_START -->
+          ## 📥 Последняя сборка
+
+          | Параметр | Значение |
+          |---|---|
+          | **Версия** | `{v}` |
+          | **Номер сборки** | `#{b}` |
+          | **Дата** | {date} |
+          | **Скачать IPA** | [**CinemaApp.ipa** ⬇]({dl}) |
+          | **Страница релиза** | [Открыть]({rel}) |
+
+          > Прямая ссылка на файл — {dl}
+          >
+          > Если она не открывается, перейдите в раздел [Releases]({all_rel}) и выберите последнюю сборку вручную.
+          <!-- IPA_INFO_END -->"""
+
+          p = pathlib.Path('README.md')
+          text = p.read_text(encoding='utf-8')
+          new_text = re.sub(
+              r'<!-- IPA_INFO_START -->.*?<!-- IPA_INFO_END -->',
+              block,
+              text,
+              flags=re.DOTALL
+          )
+          if new_text == text:
+              print('README не изменился.')
+          else:
+              p.write_text(new_text, encoding='utf-8')
+              print('README обновлён.')
+          PYEOF
+
+      - name: Commit updated README
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --staged --quiet; then
+            echo "Изменений в README нет — коммит не нужен."
+          else
+            git commit -m "docs: README → ${{ steps.ver.outputs.tag }} [skip ci]"
+            git push
+          fi
