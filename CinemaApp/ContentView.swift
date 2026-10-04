@@ -34,11 +34,9 @@ struct ContentView: View {
 
 struct ShareSheet: UIViewControllerRepresentable {
     let activityItems: [Any]
-    
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
     }
-    
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
@@ -47,7 +45,7 @@ struct WebView: UIViewRepresentable {
     @Binding var showingShareSheet: Bool
     @Binding var isLoading: Bool
     
-    private let targetURL = URL(string: "https://mix.kinogo.mu")!
+    let targetURL = URL(string: "https://mix.kinogo.mu")!
     
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -56,27 +54,40 @@ struct WebView: UIViewRepresentable {
         if #available(iOS 10.0, *) {
             config.mediaTypesRequiringUserActionForPlayback = []
         }
-        
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // JavaScript для очистки DOM от рекламы
+        // JavaScript: чистка DOM, автозакрытие крестиков, событийный подход
         let js = """
         (function() {
             window.open = function() { return null; };
             window.alert = function() { return; };
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
-            
-            function removeAds() {
+
+            function isVisible(el) {
+                if (!el) return false;
+                if (el.offsetParent === null && window.getComputedStyle(el).position !== 'fixed') return false;
+                if (el.offsetWidth < 4 || el.offsetHeight < 4) return false;
+                return true;
+            }
+
+            function simulateClick(el) {
+                try {
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                } catch(e) {}
+            }
+
+            function injectStyle() {
+                if (document.getElementById('__adblock_style__')) return;
                 var style = document.createElement('style');
+                style.id = '__adblock_style__';
                 style.innerHTML = `
                     [class*="ads"], [id*="ads"], [class*="banner"], [id*="banner"],
                     [class*="popup"], [class*="popunder"], [class*="overlay"],
                     .adsbygoogle, iframe[src*="ads"], iframe[src*="banner"],
-                    iframe[src*="promo"], div[style*="z-index: 9999"],
-                    div[style*="z-index: 99999"], a[href*="googlesyndication"],
+                    iframe[src*="promo"], a[href*="googlesyndication"],
                     a[href*="adservice"], .ad-container, .ad-wrapper,
-                    iframe[src*="pincogames"], iframe[src*="pinco"], 
+                    iframe[src*="pincogames"], iframe[src*="pinco"],
                     img[src*="pinco"], [href*="pinco"], [class*="pinco"],
                     [id*="pinco"], iframe[src*="bet"], iframe[src*="casino"],
                     img[src*="b5c1d2e8c9982e3b965a27ac72ru7284cc"],
@@ -93,52 +104,121 @@ struct WebView: UIViewRepresentable {
                     }
                 `;
                 document.head.appendChild(style);
+            }
 
+            function removeScripts() {
                 var scripts = document.getElementsByTagName('script');
                 for (var i = scripts.length - 1; i >= 0; i--) {
                     var src = scripts[i].src;
-                    if (src && (src.includes('ads') || src.includes('banner') || src.includes('pop') || src.includes('promo') || src.includes('pinco') || src.includes('b5c1d2e8c9982e3b965a27ac72ru7284cc'))) {
+                    if (src && (src.includes('ads') || src.includes('banner') || src.includes('pop') ||
+                                src.includes('promo') || src.includes('pinco') ||
+                                src.includes('b5c1d2e8c9982e3b965a27ac72ru7284cc'))) {
                         scripts[i].parentNode.removeChild(scripts[i]);
                     }
                 }
             }
 
-            removeAds();
+            function closeAdPopups() {
+                var selectors = [
+                    '[class*="close"]', '[class*="Close"]', '[class*="dismiss"]',
+                    '[aria-label*="close" i]', '[aria-label*="закрыть" i]',
+                    '[title*="close" i]', '[title*="закрыть" i]'
+                ];
+                for (var s = 0; s < selectors.length; s++) {
+                    try {
+                        var list = document.querySelectorAll(selectors[s]);
+                        for (var i = 0; i < list.length; i++) {
+                            if (isVisible(list[i])) simulateClick(list[i]);
+                        }
+                    } catch(e) {}
+                }
 
-            var observer = new MutationObserver(function(mutations) {
-                removeAds();
+                var all = document.querySelectorAll('button, span, a, i, div');
+                for (var i = 0; i < all.length; i++) {
+                    var el = all[i];
+                    if (el.children.length > 0) continue;
+                    var t = (el.textContent || '').trimX();
+                    if (t.length > 2) continue;
+                   ' if (t === '×' || t === '✕' || t === '✖' || t === '⨯' ||
+                        t === ' || t === 'x' || t === 'Х' || t === 'х') {
+                        if (isVisible(el)) {
+                            simulateClick(el);
+                            var p = el.parentElement;
+                            var depth = 0;
+                            while (p && depth < 8) {
+                                var st = window.getComputedStyle(p);
+                                var z = parseInt(st.zIndex) || 0;
+                                if (st.position === 'fixed' || (st.position === 'absolute' && z > 100)) {
+                                    p.style.display = 'none';
+                                    p.style.visibility = 'hidden';
+                                    p.style.pointerEvents = 'none';
+                                    break;
+                                }
+                                p = p.parentElement;
+                                depth++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            var isRunning = false;
+            function runAll() {
+                if (isRunning) return;
+                isRunning = true;
+                try {
+                    injectStyle();
+                    removeScripts();
+                    closeAdPopups();
+                } finally {
+                    isRunning = false;
+                }
+            }
+
+            runAll();
+
+            var pending = false;
+            function scheduleRun() {
+                if (pending) return;
+                pending = true;
+                setTimeout(function() { pending = false; runAll(); }, 300);
+            }
+
+            try {
+                var observer = new MutationObserver(scheduleRun);
+                observer.observe(document.documentElement, { childList: true, subtree: true });
+            } catch(e) {}
+
+            var delays = [100, 300, 800, 2000, 5000, 10000, 20000];
+            delays.forEach(function(d) {
+                setTimeout(runAll, d);
             });
-            observer.observe(document.documentElement, { childList: true, subtree: true });
         })();
         """
         let userScript = WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         config.userContentController.addUserScript(userScript)
+        
+        compileAdBlockRules(for: config.userContentController)
         
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         
-        // Компилируем правила блокировки рекламы и только ПОСЛЕ этого грузим сайт.
-        // Это исправляет баг с белым экраном при первом запуске.
-        let targetURL = self.targetURL
-        compileAdBlockRules(for: config.userContentController) {
-            DispatchQueue.main.async {
-                webView.load(URLRequest(url: targetURL))
-            }
-        }
-        
+        context.coordinator.webView = webView
         return webView
     }
     
-    // Не перезагружаем сайт при обновлении SwiftUI
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    // Загрузка идёт из updateUIView — на момент вызова view уже в иерархии SwiftUI
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        context.coordinator.loadInitialURLIfNeeded(in: uiView)
+    }
     
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    private func compileAdBlockRules(for controller: WKUserContentController, completion: @escaping () -> Void) {
+    private func compileAdBlockRules(for controller: WKUserContentController) {
         let blockedDomains = [
             "doubleclick.net", "googlesyndication.com", "googleadservices.com",
             "adsystem.com", "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
@@ -157,38 +237,19 @@ struct WebView: UIViewRepresentable {
                     "url-filter": ".*",
                     "if-domain": ["*\(domain)"]
                 ],
-                "action": [
-                    "type": "block"
-                ]
+                "action": ["type": "block"]
             ]
             rulesArray.append(rule)
         }
         
-        // Блокировка конкретного баннера pinco по URL
         let specificBannerRule: [String: Any] = [
-            "trigger": [
-                "url-filter": ".*pinco_banner.*\\.gif"
-            ],
-            "action": [
-                "type": "block"
-            ]
+            "trigger": ["url-filter": ".*pinco_banner.*\\.gif"],
+            "action": ["type": "block"]
         ]
         rulesArray.append(specificBannerRule)
         
-        // Блокировка любых .gif с рекламных CDN
-        let gifBannerRule: [String: Any] = [
-            "trigger": [
-                "url-filter": ".*b5c1d2e8c9982e3b965a27ac72ru7284cc\\.com.*"
-            ],
-            "action": [
-                "type": "block"
-            ]
-        ]
-        rulesArray.append(gifBannerRule)
-        
         guard let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
               let jsonString = String(data: jsonData, encoding: .utf8) else {
-            completion()
             return
         }
         
@@ -201,46 +262,92 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила блокировки рекламы успешно загружены.")
+                print("Правила блокировки рекламы загружены.")
             }
-            // Загружаем сайт только после применения правил
-            completion()
         }
     }
     
     class Coordinator: NSObject, WKNavigationDelegate {
         var parent: WebView
+        weak var webView: WKWebView?
+        private var didLoadInitial = false
+        private var retryCount = 0
+        private let maxRetries = 3
+        private var loadTimeoutTimer: Timer?
         
         init(_ parent: WebView) {
             self.parent = parent
         }
         
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            if parent.isLoading {
-                DispatchQueue.main.async {
-                    self.parent.isLoading = false
+        func loadInitialURLIfNeeded(in webView: WKWebView) {
+            guard !didLoadInitial else { return }
+            didLoadInitial = true
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self, weak webView] in
+                guard let self = self, let webView = webView else { return }
+                let request = URLRequest(url: self.parent.targetURL,
+                                         cachePolicy: .reloadRevalidatingCacheData,
+                                         timeoutInterval: 30)
+                webView.load(request)
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            loadTimeoutTimer?.invalidate()
+            loadTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 12.0, repeats: false) { [weak self, weak webView] _ in
+                guard let self = self, let webView = webView else { return }
+                if self.parent.isLoading {
+                    print("Таймаут загрузки, ретрай \(self.retryCount + 1)")
+                    self.retryLoad(webView: webView)
                 }
+            }
+        }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            loadTimeoutTimer?.invalidate()
+            retryCount = 0
+            if parent.isLoading {
+                DispatchQueue.main.async { self.parent.isLoading = false }
             }
         }
         
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            if parent.isLoading {
-                DispatchQueue.main.async {
-                    self.parent.isLoading = false
-                }
-            }
+            loadTimeoutTimer?.invalidate()
+            print("didFail: \(error.localizedDescription)")
+            retryLoad(webView: webView)
         }
         
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            if parent.isLoading {
-                DispatchQueue.main.async {
-                    self.parent.isLoading = false
+            loadTimeoutTimer?.invalidate()
+            print("didFailProvisional: \(error.localizedDescription)")
+            retryLoad(webView: webView)
+        }
+        
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            print("WebContent процесс упал, перезагрузка")
+            retryCount = 0
+            webView.reload()
+        }
+        
+        private func retryLoad(webView: WKWebView) {
+            guard retryCount < maxRetries else {
+                if parent.isLoading {
+                    DispatchQueue.main.async { self.parent.isLoading = false }
                 }
+                return
+            }
+            retryCount += 1
+            let delay = Double(retryCount) * 1.0
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
+                guard let self = self, let webView = webView else { return }
+                let request = URLRequest(url: self.parent.targetURL,
+                                         cachePolicy: .reloadRevalidatingCacheData,
+                                         timeoutInterval: 30)
+                webView.load(request)
             }
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            
             guard let url = navigationAction.request.url else {
                 decisionHandler(.allow)
                 return
