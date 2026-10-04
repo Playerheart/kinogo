@@ -56,59 +56,73 @@ struct WebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // Снайперский кликер по крестику
         let js = """
         (function() {
             window.open = function() { return null; };
             window.alert = function() { return; };
             window.confirm = function() { return false; };
-            
-            function clickTheCross() {
+            window.prompt = function() { return null; };
+
+            var clickCount = 0;      // Лимит: максимум 2 клика за страницу
+            var isCoolingDown = false; // Пауза между кликами, чтобы не сбивать скролл
+
+            function tryControlledClose() {
+                if (clickCount >= 2 || isCoolingDown) return;
+
+                var w = window.innerWidth || document.documentElement.clientWidth;
                 var h = window.innerHeight || document.documentElement.clientHeight;
-                
-                // Ищем все элементы, которые могут быть крестиком (кнопки, иконки, спаны)
-                var possibleCrosses = document.querySelectorAll('div, span, button, a, svg, i');
-                
-                for (var i = 0; i < possibleCrosses.length; i++) {
-                    var el = possibleCrosses[i];
-                    
-                    // Защита: никогда не кликаем по плееру
-                    if (el.closest && el.closest('#player, .player, .vjs-control-bar')) continue;
-                    
-                    var rect = el.getBoundingClientRect();
-                    
-                    // Крестик со скриншота находится в нижней половине экрана и имеет небольшой размер (от 10 до 60 пикселей)
-                    if (rect.top > (h * 0.5) && rect.width >= 10 && rect.width <= 60 && rect.height >= 10 && rect.height <= 60) {
-                        
-                        var txt = (el.textContent || '').trim().toLowerCase();
-                        var cls = (el.className || '').toString().toLowerCase();
-                        
-                        // Признаки того, что это кнопка закрытия
-                        var isCross = ['×', 'x', '✕', '✖', 'х'].indexOf(txt) !== -1 || 
-                                      cls.indexOf('close') !== -1 || 
-                                      el.tagName.toLowerCase() === 'svg';
-                        
-                        if (isCross) {
-                            try {
-                                // Нажимаем на него всеми доступными способами для надежности
-                                if (typeof el.click === 'function') el.click();
-                                
-                                el.dispatchEvent(new Event('touchstart', { bubbles: true }));
-                                el.dispatchEvent(new Event('touchend', { bubbles: true }));
-                                el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                
-                            } catch(e) {}
-                        }
+
+                var checkPoints = [
+                    { x: w - 25, y: h - 35 },
+                    { x: w - 30, y: h - 40 },
+                    { x: w - 20, y: h - 30 }
+                ];
+
+                for (var i = 0; i < checkPoints.length; i++) {
+                    var pt = checkPoints[i];
+                    var el = document.elementFromPoint(pt.x, pt.y);
+                    if (!el) continue;
+
+                    // Не затрагиваем плеер
+                    if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
+                        continue;
+                    }
+
+                    var txt = (el.textContent || '').trim();
+                    var cls = (el.className || '').toString().toLowerCase();
+                    var isX = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(txt) !== -1 || cls.indexOf('close') !== -1;
+
+                    if (isX || el.tagName === 'SVG' || el.tagName === 'PATH' || el.tagName === 'BUTTON' || el.tagName === 'SPAN' || el.tagName === 'DIV') {
+                        try {
+                            var opts = { bubbles: true, cancelable: true, view: window, clientX: pt.x, clientY: pt.y };
+                            el.dispatchEvent(new MouseEvent('click', opts));
+                            if (typeof el.click === 'function') el.click();
+                            
+                            clickCount++;
+                            isCoolingDown = true;
+
+                            // Скрываем сам контейнер
+                            var parentFixed = el.closest('div[style*="fixed"], div[style*="sticky"], .sticky-banner');
+                            if (parentFixed) {
+                                parentFixed.style.setProperty('display', 'none', 'important');
+                            }
+
+                            // Пауза 2 секунды перед тем, как разблокировать проверку на второй баннер
+                            setTimeout(function() {
+                                isCoolingDown = false;
+                            }, 2000);
+
+                            break;
+                        } catch(e) {}
                     }
                 }
             }
 
-            // Запускаем проверку каждую секунду. Как только баннер появится — скрипт его сразу "закроет".
-            setInterval(clickTheCross, 1000);
-            
-            // Также проверяем при любой активности
-            window.addEventListener('scroll', clickTheCross, { passive: true });
-            document.addEventListener('DOMContentLoaded', clickTheCross);
+            // График точечных проверок (первая волна + проверка на второй баннер спустя паузу)
+            var schedule = [300, 600, 1000, 2000, 3500, 5000, 7000];
+            schedule.forEach(function(delay) {
+                setTimeout(tryControlledClose, delay);
+            });
         })();
         """
         
@@ -135,14 +149,18 @@ struct WebView: UIViewRepresentable {
     }
     
     private func compileAdBlockRules(for controller: WKUserContentController) {
-        // Оставляем базовую блокировку левых доменов для скорости загрузки
         let blockedDomains = [
-            "doubleclick.net", "googlesyndication.com", "adsystem.com", "adnxs.com", 
-            "criteo.com", "taboola.com", "outbrain.com", "ads.yandex.ru", "an.yandex.ru",
-            "b5c1d2e8c9982e3b965a27ac72ru7284cc.com", "pincogames.com", "pinco.com"
+            "doubleclick.net", "googlesyndication.com", "googleadservices.com",
+            "adsystem.com", "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
+            "adservice.google.com", "ads.yahoo.com", "ads.yandex.ru", "an.yandex.ru",
+            "adf.ly", "shorte.st", "linkbucks.com",
+            "b5c1d2e8c9982e3b965a27ac72ru7284cc.com",
+            "agl007.site", "ex-fs.net", "lordfilmserial.pics",
+            "pincogames.com", "pinco.com", "bet.com", "casino.com"
         ]
         
         var rulesArray: [[String: Any]] = []
+        
         for domain in blockedDomains {
             rulesArray.append([
                 "trigger": ["url-filter": ".*", "if-domain": [domain]],
@@ -154,17 +172,42 @@ struct WebView: UIViewRepresentable {
             ])
         }
         
-        guard let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
-              let jsonString = String(data: jsonData, encoding: .utf8) else { return }
+        let urlPatterns = [
+            ".*pinco.*",
+            ".*kysh.*",
+            ".*promocode.*",
+            ".*bahis.*",
+            ".*kazanmak.*",
+            ".*pincogames.*",
+            ".*b5c1d2e8c9982e3b965a27ac72ru7284cc.*",
+            ".*sticky-ad.*",
+            ".*floor-banner.*",
+            ".*mobile-bottom-ad.*"
+        ]
+        for pattern in urlPatterns {
+            rulesArray.append([
+                "trigger": ["url-filter": pattern],
+                "action": ["type": "block"]
+            ])
+        }
         
-        let identifier = "AdBlockRules_v15"
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return
+        }
+        
+        let identifier = "AdBlockRules_v11"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
             encodedContentRuleList: jsonString
         ) { (contentRuleList, error) in
+            if let error = error {
+                print("Ошибка компиляции правил блокировки: \(error.localizedDescription)")
+            }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
+                print("Правила v11 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
@@ -198,7 +241,9 @@ struct WebView: UIViewRepresentable {
             loadTimeoutTimer?.invalidate()
             loadTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 12.0, repeats: false) { [weak self, weak webView] _ in
                 guard let self = self, let webView = webView else { return }
-                if self.parent.isLoading { self.retryLoad(webView: webView) }
+                if self.parent.isLoading {
+                    self.retryLoad(webView: webView)
+                }
             }
         }
         
@@ -227,7 +272,9 @@ struct WebView: UIViewRepresentable {
         
         private func retryLoad(webView: WKWebView) {
             guard retryCount < maxRetries else {
-                if parent.isLoading { DispatchQueue.main.async { self.parent.isLoading = false } }
+                if parent.isLoading {
+                    DispatchQueue.main.async { self.parent.isLoading = false }
+                }
                 return
             }
             retryCount += 1
@@ -248,6 +295,7 @@ struct WebView: UIViewRepresentable {
             }
             
             let urlString = url.absoluteString.lowercased()
+            
             let downloadExtensions = [".mp4", ".mkv", ".avi", ".m3u8", ".mov", ".flv"]
             let isDownloadLink = downloadExtensions.contains { urlString.hasSuffix($0) } || urlString.contains("download") || urlString.contains("dl=")
             
