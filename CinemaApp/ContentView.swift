@@ -63,17 +63,19 @@ struct WebView: UIViewRepresentable {
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
 
-            // 1. Принудительный клик по координатам крестика (правый нижний угол)
-            function clickCloseByCoordinates() {
+            var hasClicked = false; // Флаг: закрывать строго 1 раз
+
+            function tryOneTimeClose() {
+                if (hasClicked) return;
+
                 var w = window.innerWidth || document.documentElement.clientWidth;
                 var h = window.innerHeight || document.documentElement.clientHeight;
 
-                // Крестик находится примерно в 20-30px от правого края и 20-50px от нижнего края
+                // Точки проверки крестика в правом нижнем углу
                 var checkPoints = [
                     { x: w - 25, y: h - 35 },
                     { x: w - 30, y: h - 40 },
-                    { x: w - 20, y: h - 30 },
-                    { x: w - 35, y: h - 45 }
+                    { x: w - 20, y: h - 30 }
                 ];
 
                 for (var i = 0; i < checkPoints.length; i++) {
@@ -81,108 +83,39 @@ struct WebView: UIViewRepresentable {
                     var el = document.elementFromPoint(pt.x, pt.y);
                     if (!el) continue;
 
-                    // Если попали в сам крестик, его обертку или иконку
+                    // Не задеваем плеер
+                    if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
+                        continue;
+                    }
+
                     var txt = (el.textContent || '').trim();
                     var cls = (el.className || '').toString().toLowerCase();
                     var isX = ['×', '✕', '✖', 'x', 'х', 'X'].indexOf(txt) !== -1 || cls.indexOf('close') !== -1;
 
                     if (isX || el.tagName === 'SVG' || el.tagName === 'PATH' || el.tagName === 'BUTTON' || el.tagName === 'SPAN' || el.tagName === 'DIV') {
-                        // Не кликаем, если под куполом оказался плеер
-                        if (el.closest && el.closest('#player, .player, iframe[src*="kodik"], iframe[src*="alloha"]')) {
-                            continue;
-                        }
-
                         try {
                             var opts = { bubbles: true, cancelable: true, view: window, clientX: pt.x, clientY: pt.y };
-                            el.dispatchEvent(new PointerEvent('pointerdown', opts));
-                            el.dispatchEvent(new PointerEvent('pointerup', opts));
                             el.dispatchEvent(new MouseEvent('click', opts));
                             if (typeof el.click === 'function') el.click();
+                            
+                            hasClicked = true; // Успешно кликнули — завершаем работу
+
+                            // Также скрываем контейнер
+                            var parentFixed = el.closest('div[style*="fixed"], div[style*="sticky"], .sticky-banner');
+                            if (parentFixed) {
+                                parentFixed.style.setProperty('display', 'none', 'important');
+                            }
+                            break;
                         } catch(e) {}
                     }
                 }
             }
 
-            // 2. Сканирование и удаление фиксированных блоков внизу
-            function sweepBottomOverlays() {
-                var nodes = document.body ? document.body.querySelectorAll('*') : [];
-                var h = window.innerHeight || document.documentElement.clientHeight;
-                var w = window.innerWidth || document.documentElement.clientWidth;
-
-                for (var i = 0; i < nodes.length; i++) {
-                    var el = nodes[i];
-                    if (!el || !el.getBoundingClientRect) continue;
-
-                    // Пропускаем видеоплеер
-                    if (el.querySelector && el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="videocdn"]')) {
-                        continue;
-                    }
-                    if (el.tagName === 'IFRAME' && (el.src.indexOf('kodik') !== -1 || el.src.indexOf('alloha') !== -1)) {
-                        continue;
-                    }
-
-                    var st = window.getComputedStyle(el);
-                    if (st.position === 'fixed' || st.position === 'sticky') {
-                        var r = el.getBoundingClientRect();
-
-                        // Условие: находится в самом низу и занимает значительную часть ширины
-                        var isBottomFixed = (r.bottom >= h - 10) && (r.top > h - 300) && (r.height < 350) && (r.width > w * 0.4);
-
-                        if (isBottomFixed) {
-                            // Кликаем по крестику внутри
-                            var closeButtons = el.querySelectorAll('button, span, div, a, svg');
-                            for (var j = 0; j < closeButtons.length; j++) {
-                                var b = closeButtons[j];
-                                var bTxt = (b.textContent || '').trim();
-                                var bRect = b.getBoundingClientRect();
-                                if (['×', '✕', '✖', 'x', 'х', 'X'].indexOf(bTxt) !== -1 || (bRect.width > 0 && bRect.width < 50 && bRect.height < 50)) {
-                                    try {
-                                        b.click();
-                                        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                                    } catch(e) {}
-                                }
-                            }
-
-                            // Полностью уничтожаем элемент
-                            el.style.setProperty('display', 'none', 'important');
-                            el.style.setProperty('visibility', 'hidden', 'important');
-                            el.style.setProperty('opacity', '0', 'important');
-                            el.style.setProperty('pointer-events', 'none', 'important');
-                            if (el.parentNode) {
-                                el.parentNode.removeChild(el);
-                            }
-                        }
-                    }
-                }
-            }
-
-            function runAll() {
-                clickCloseByCoordinates();
-                sweepBottomOverlays();
-            }
-
-            // Запускаем сразу и с интервалами
-            runAll();
-
-            if (document.readyState === 'complete' || document.readyState === 'interactive') {
-                runAll();
-            } else {
-                document.addEventListener('DOMContentLoaded', runAll);
-            }
-
-            var observer = new MutationObserver(function() {
-                runAll();
+            // Запускаем с небольшими интервалами только в первые секунды загрузки страницы
+            var attempts = [300, 600, 1000, 1500, 2500];
+            attempts.forEach(function(delay) {
+                setTimeout(tryOneTimeClose, delay);
             });
-
-            if (document.body) {
-                observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-            }
-
-            var delays = [100, 250, 500, 800, 1200, 1800, 2500, 3500, 5000, 7000];
-            delays.forEach(function(d) { setTimeout(runAll, d); });
-
-            window.addEventListener('scroll', runAll, { passive: true });
-            window.addEventListener('resize', runAll, { passive: true });
         })();
         """
         
@@ -256,7 +189,7 @@ struct WebView: UIViewRepresentable {
             return
         }
         
-        let identifier = "AdBlockRules_v9"
+        let identifier = "AdBlockRules_v10"
         
         WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: identifier,
@@ -267,7 +200,7 @@ struct WebView: UIViewRepresentable {
             }
             if let contentRuleList = contentRuleList {
                 controller.add(contentRuleList)
-                print("Правила v9 загружены (\(rulesArray.count) шт.)")
+                print("Правила v10 загружены (\(rulesArray.count) шт.)")
             }
         }
     }
