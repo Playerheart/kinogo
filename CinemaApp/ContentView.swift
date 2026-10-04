@@ -4,15 +4,30 @@ import WebKit
 struct ContentView: View {
     @State private var downloadURL: URL?
     @State private var showingShareSheet = false
+    @State private var isLoading = true
     
     var body: some View {
-        WebView(downloadURL: $downloadURL, showingShareSheet: $showingShareSheet)
+        ZStack {
+            WebView(
+                downloadURL: $downloadURL,
+                showingShareSheet: $showingShareSheet,
+                isLoading: $isLoading
+            )
             .edgesIgnoringSafeArea(.all)
-            .sheet(isPresented: $showingShareSheet) {
-                if let url = downloadURL {
-                    ShareSheet(activityItems: [url])
-                }
+            
+            if isLoading {
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .progressViewStyle(CircularProgressViewStyle(tint: .blue))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color.black.opacity(0.6))
             }
+        }
+        .sheet(isPresented: $showingShareSheet) {
+            if let url = downloadURL {
+                ShareSheet(activityItems: [url])
+            }
+        }
     }
 }
 
@@ -29,6 +44,7 @@ struct ShareSheet: UIViewControllerRepresentable {
 struct WebView: UIViewRepresentable {
     @Binding var downloadURL: URL?
     @Binding var showingShareSheet: Bool
+    @Binding var isLoading: Bool
     
     private let targetURL = URL(string: "https://mix.kinogo.mu")!
     
@@ -40,24 +56,26 @@ struct WebView: UIViewRepresentable {
             config.mediaTypesRequiringUserActionForPlayback = []
         }
         
-        // Разрешаем открывать окна из JS
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         
-        // 1. НАСТРОЙКА БЛОКИРОВКИ РЕКЛАМЫ НА УРОВНЕ СЕТИ
-        setupAdBlockRules(for: config.userContentController)
+        // 1. Сначала компилируем правила блокировки
+        setupAdBlockRules(for: config.userContentController) {
+            // 2. И только ПОСЛЕ успешной компиляции загружаем сайт
+            DispatchQueue.main.async {
+                let request = URLRequest(url: targetURL)
+                // webView будет доступен здесь
+            }
+        }
         
         // 2. УСИЛЕННЫЙ JAVASCRIPT ДЛЯ ВЫЧИЩЕНИЯ DOM
         let js = """
         (function() {
-            // Блокировка всплывающих окон и алертов
             window.open = function() { return null; };
             window.alert = function() { return; };
             window.confirm = function() { return false; };
             window.prompt = function() { return null; };
             
-            // Функция для удаления рекламных элементов
             function removeAds() {
-                // Скрываем всё, что похоже на рекламу
                 var style = document.createElement('style');
                 style.innerHTML = `
                     [class*="ads"], [id*="ads"], [class*="banner"], [id*="banner"],
@@ -68,7 +86,10 @@ struct WebView: UIViewRepresentable {
                     a[href*="adservice"], .ad-container, .ad-wrapper,
                     iframe[src*="pincogames"], iframe[src*="pinco"], 
                     img[src*="pinco"], [href*="pinco"], [class*="pinco"],
-                    [id*="pinco"], iframe[src*="bet"], iframe[src*="casino"] {
+                    [id*="pinco"], iframe[src*="bet"], iframe[src*="casino"],
+                    img[src*="b5c1d2e8c9982e3b965a27ac72ru7284cc"],
+                    iframe[src*="b5c1d2e8c9982e3b965a27ac72ru7284cc"],
+                    [src*="pinco_banner"], [href*="pinco_banner"] {
                         display: none !important;
                         visibility: hidden !important;
                         opacity: 0 !important;
@@ -81,20 +102,17 @@ struct WebView: UIViewRepresentable {
                 `;
                 document.head.appendChild(style);
 
-                // Удаляем рекламные скрипты
                 var scripts = document.getElementsByTagName('script');
                 for (var i = scripts.length - 1; i >= 0; i--) {
                     var src = scripts[i].src;
-                    if (src && (src.includes('ads') || src.includes('banner') || src.includes('pop') || src.includes('promo') || src.includes('pinco'))) {
+                    if (src && (src.includes('ads') || src.includes('banner') || src.includes('pop') || src.includes('promo') || src.includes('pinco') || src.includes('b5c1d2e8c9982e3b965a27ac72ru7284cc'))) {
                         scripts[i].parentNode.removeChild(scripts[i]);
                     }
                 }
             }
 
-            // Запускаем при загрузке
             removeAds();
 
-            // Следим за динамическими изменениями (MutationObserver)
             var observer = new MutationObserver(function(mutations) {
                 removeAds();
             });
@@ -109,36 +127,33 @@ struct WebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         
+        // Загружаем сайт сразу после создания webView,
+        // но с задержкой, чтобы правила успели примениться
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let request = URLRequest(url: targetURL)
+            webView.load(request)
+        }
+        
         return webView
     }
     
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        let request = URLRequest(url: targetURL)
-        uiView.load(request)
+        // НЕ загружаем сайт здесь, чтобы не было повторных загрузок
     }
     
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    // Настройка правил блокировки на уровне сети
-    private func setupAdBlockRules(for userContentController: WKUserContentController) {
-        let adBlockRules = """
-        [
-            {
-                "trigger": {"url-filter": ".*", "resource-type": ["script", "image", "style-sheet", "font", "media", "fetch", "websocket"]},
-                "action": {"type": "block"}
-            }
-        ]
-        """
-        
-        // Здесь мы перечисляем домены, которые нужно заблокировать
+    private func setupAdBlockRules(for userContentController: WKUserContentController, completion: @escaping () -> Void) {
         let blockedDomains = [
             "doubleclick.net", "googlesyndication.com", "googleadservices.com",
             "adsystem.com", "adnxs.com", "criteo.com", "taboola.com", "outbrain.com",
-            "pincogames.com", "pinco.com", "bet.com", "casino.com",
-            "adservice.google.com", "ads.yahoo.com", "ads.yandex.ru",
-            "an.yandex.ru", "adf.ly", "shorte.st", "linkbucks.com"
+            "adservice.google.com", "ads.yahoo.com", "ads.yandex.ru", "an.yandex.ru",
+            "adf.ly", "shorte.st", "linkbucks.com",
+            "b5c1d2e8c9982e3b965a27ac72ru7284cc.com",
+            "agl007.site", "ex-fs.net", "lordfilmserial.pics",
+            "pincogames.com", "pinco.com", "bet.com", "casino.com"
         ]
         
         var rulesArray: [[String: Any]] = []
@@ -156,6 +171,16 @@ struct WebView: UIViewRepresentable {
             rulesArray.append(rule)
         }
         
+        let specificBannerRule: [String: Any] = [
+            "trigger": [
+                "url-filter": ".*pinco_banner.*\\.gif"
+            ],
+            "action": [
+                "type": "block"
+            ]
+        ]
+        rulesArray.append(specificBannerRule)
+        
         if let jsonData = try? JSONSerialization.data(withJSONObject: rulesArray),
            let jsonString = String(data: jsonData, encoding: .utf8) {
             
@@ -165,13 +190,16 @@ struct WebView: UIViewRepresentable {
             ) { (contentRuleList, error) in
                 if let error = error {
                     print("Ошибка компиляции правил блокировки: \(error.localizedDescription)")
-                    return
                 }
                 if let contentRuleList = contentRuleList {
                     userContentController.add(contentRuleList)
                     print("Правила блокировки рекламы успешно загружены.")
                 }
+                // Сообщаем, что можно грузить сайт
+                completion()
             }
+        } else {
+            completion()
         }
     }
     
@@ -180,6 +208,22 @@ struct WebView: UIViewRepresentable {
         
         init(_ parent: WebView) {
             self.parent = parent
+        }
+        
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            parent.isLoading = true
+        }
+        
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            parent.isLoading = false
+        }
+        
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            parent.isLoading = false
+        }
+        
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            parent.isLoading = false
         }
         
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -191,7 +235,6 @@ struct WebView: UIViewRepresentable {
             
             let urlString = url.absoluteString.lowercased()
             
-            // Перехват ссылок на скачивание файлов
             let downloadExtensions = [".mp4", ".mkv", ".avi", ".m3u8", ".mov", ".flv"]
             let isDownloadLink = downloadExtensions.contains { urlString.hasSuffix($0) } || urlString.contains("download") || urlString.contains("dl=")
             
@@ -204,7 +247,6 @@ struct WebView: UIViewRepresentable {
                 return
             }
             
-            // Блокировка переходов на внешние рекламные домены
             let allowedHosts = ["kinogo.mu", "mix.kinogo.mu", "kodik.info", "alloha.tv", "bazon.cc", "videocdn.tv"]
             let isAllowed = allowedHosts.contains { urlString.contains($0) }
             
@@ -213,7 +255,6 @@ struct WebView: UIViewRepresentable {
                 return
             }
             
-            // Открытие ссылок target="_blank" в текущем окне
             if navigationAction.targetFrame == nil {
                 webView.load(navigationAction.request)
                 decisionHandler(.cancel)
