@@ -4,6 +4,7 @@ import WebKit
 struct ScopedWebView: UIViewRepresentable {
     let url: URL
     @Binding var isLoading: Bool
+    var onMovieTap: ((URL) -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -26,7 +27,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v3",
+            forIdentifier: "ScopedBlock_v4",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -35,18 +36,15 @@ struct ScopedWebView: UIViewRepresentable {
         let js = """
         (function() {
             var HIDE_ID = '__scoped_hide__';
-
             function ensureStyle() {
                 if (document.getElementById(HIDE_ID)) return;
                 var style = document.createElement('style');
                 style.id = HIDE_ID;
                 style.innerHTML = `
-                    header, nav, footer,
-                    .header, .footer, .nav, .top-menu, .main-menu,
+                    header, footer, .header, .footer, .nav, .top-menu, .main-menu,
                     .sidebar, .left-side, .right-side, aside,
                     #header, #footer, #nav, #sidebar,
-                    .comments, #comments,
-                    .social, .share, .breadcrumbs, .breadcrumb,
+                    .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
                     .yellow-banner, [class*="yellow-banner"],
                     [class*="pinco" i], [class*="kysh" i],
                     [data-adblock-hidden="1"] {
@@ -56,64 +54,31 @@ struct ScopedWebView: UIViewRepresentable {
                         min-height: 0 !important;
                     }
                     html, body {
-                        background: #000 !important;
-                        color: #fff !important;
-                        padding: 0 !important;
-                        margin: 0 !important;
-                        max-width: 100% !important;
-                        overflow-x: hidden !important;
+                        background: #000 !important; color: #fff !important;
+                        padding: 0 !important; margin: 0 !important;
+                        max-width: 100% !important; overflow-x: hidden !important;
                     }
                     body * { max-width: 100% !important; }
                     .content, .main, .page, .wrapper, .container,
                     #content, #main, .content-wrapper, .main-content {
-                        padding: 6px !important;
-                        margin: 0 !important;
-                        max-width: 100% !important;
-                        width: 100% !important;
-                        background: transparent !important;
-                        box-sizing: border-box !important;
-                    }
-                    .tabs, .tabs__box, .tabs__content, #player, .player-box,
-                    .movie__description, .full-story, .description, .short-story,
-                    .actors, .persons-list, .persons, .persons-list-box {
-                        background: #0d0d0d !important;
-                        border-radius: 8px !important;
-                        margin-bottom: 12px !important;
-                        padding: 8px !important;
-                        box-sizing: border-box !important;
-                    }
-                    .tabs__list, .tabs-list {
-                        display: flex !important;
-                        flex-wrap: wrap !important;
-                        gap: 4px !important;
-                    }
-                    .tabs__list li, .tabs-list li {
-                        padding: 6px 12px !important;
-                        border-radius: 6px !important;
-                        background: #1a1a1a !important;
-                        color: #ccc !important;
-                        cursor: pointer !important;
-                    }
-                    .tabs__list li.active, .tabs-list li.active,
-                    .tabs__list li[aria-selected="true"], .tabs-list li[aria-selected="true"] {
-                        background: #2563eb !important;
-                        color: #fff !important;
+                        padding: 6px !important; margin: 0 !important;
+                        max-width: 100% !important; width: 100% !important;
+                        background: transparent !important; box-sizing: border-box !important;
                     }
                 `;
                 document.head.appendChild(style);
             }
 
             var BAD_TEXTS = [
-                'pinco', 'promocode', ' bahis yap', 'bahis yap',
+                'pinco', 'promocode', 'bahis yap',
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
                 'скачай официальное мобильное', 'скачай мобильное приложение',
-                'подпишись на kinogo', 'будь в курсе актуальных',
-                'рекомендации к просмотру'
+                'подпишись на kinogo', 'будь в курсе актуальных'
             ];
 
             function containsPlayer(el) {
                 if (!el.querySelector) return false;
-                return el.querySelector('video, iframe[src*="kodik"], iframe[src*="alloha"], iframe[src*="bazon"], iframe[src*="videocdn"], iframe[src*="sibnet"]') !== null;
+                return el.querySelector('video, iframe[src*="cinemar"], iframe[src*="kodik"], iframe[src*="alloha"]') !== null;
             }
 
             function hideByText() {
@@ -123,16 +88,13 @@ struct ScopedWebView: UIViewRepresentable {
                     if (el.getAttribute('data-adblock-hidden')) continue;
                     if (el.style && el.style.display === 'none') continue;
                     if (containsPlayer(el)) continue;
-
                     var text = (el.textContent || '').toLowerCase();
                     if (text.length < 5 || text.length > 800) continue;
-
                     for (var j = 0; j < BAD_TEXTS.length; j++) {
                         if (text.indexOf(BAD_TEXTS[j]) !== -1) {
                             var r = el.getBoundingClientRect();
                             if (r.height > 40 && r.height < 500 && r.width > 180) {
                                 el.style.setProperty('display', 'none', 'important');
-                                el.style.setProperty('height', '0', 'important');
                                 el.setAttribute('data-adblock-hidden', '1');
                             }
                             break;
@@ -147,14 +109,11 @@ struct ScopedWebView: UIViewRepresentable {
                     var img = imgs[i];
                     if (img.getAttribute('data-adblock-hidden')) continue;
                     var src = (img.src || img.getAttribute('data-src') || '').toLowerCase();
-                    var isAd = src.indexOf('pinco') !== -1 ||
-                               src.indexOf('kysh') !== -1 ||
-                               src.indexOf('promocode') !== -1 ||
-                               src.indexOf('bahis') !== -1 ||
+                    var isAd = src.indexOf('pinco') !== -1 || src.indexOf('kysh') !== -1 ||
+                               src.indexOf('promocode') !== -1 || src.indexOf('bahis') !== -1 ||
                                src.indexOf('b5c1d2e8') !== -1 ||
-                               (img.complete && img.naturalWidth === 0);
+                               (img.complete && img.naturalWidth === 0 && src.indexOf('poster') === -1);
                     if (!isAd) continue;
-
                     img.style.setProperty('display', 'none', 'important');
                     var p = img.parentElement;
                     var depth = 0;
@@ -167,42 +126,9 @@ struct ScopedWebView: UIViewRepresentable {
                             p.setAttribute('data-adblock-hidden', '1');
                             break;
                         }
-                        p = p.parentElement;
-                        depth++;
+                        p = p.parentElement; depth++;
                     }
                 }
-            }
-
-            function hideByBackground() {
-                var all = document.querySelectorAll('div, section, aside, a');
-                for (var i = 0; i < all.length; i++) {
-                    var el = all[i];
-                    if (el.getAttribute('data-adblock-hidden')) continue;
-                    var bg = window.getComputedStyle(el).backgroundImage;
-                    if (bg && bg !== 'none') {
-                        var lower = bg.toLowerCase();
-                        if (lower.indexOf('pinco') !== -1 || lower.indexOf('kysh') !== -1 ||
-                            lower.indexOf('promocode') !== -1 || lower.indexOf('b5c1d2e8') !== -1) {
-                            el.style.setProperty('display', 'none', 'important');
-                            el.setAttribute('data-adblock-hidden', '1');
-                        }
-                    }
-                }
-            }
-
-            function activateOnlineTab() {
-                try {
-                    var tabs = document.querySelectorAll('.tabs__list li, .tabs li, [role="tab"], .tabs__list a, .tabs a');
-                    for (var i = 0; i < tabs.length; i++) {
-                        var t = (tabs[i].textContent || '').trim().toLowerCase();
-                       0 if (t.indexOf('смотреть онлайн') !== -1) {
-                            var isActive = tabs[i].classList.contains('active') ||
-                                           tabs[i].getAttribute('aria-selected') === 'true';
-                            if (!isActive) tabs[i].click();
-                            break;
-                        }
-                    }
-                } catch(e) {}
             }
 
             var pending = false;
@@ -212,20 +138,16 @@ struct ScopedWebView: UIViewRepresentable {
                 setTimeout(function() {
                     pending = false;
                     ensureStyle();
-                    activateOnlineTab();
                     hideByText();
                     hideByImage();
-                    hideByBackground();
                 }, 250);
             }
-
             run();
             try {
                 var obs = new MutationObserver(run);
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
-
-            [100, 400, 1000, 2000, 3500, 600, 10000, 15000, 25000].forEach(function(d){ setTimeout(run, d); });
+            [100, 500, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -242,19 +164,60 @@ struct ScopedWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .black
 
         context.coordinator.webView = webView
+        context.coordinator.onMovieTap = onMovieTap
         webView.load(URLRequest(url: url))
         return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        if uiView.url != url && context.coordinator.lastLoadedURL != url {
+            context.coordinator.lastLoadedURL = url
+            uiView.load(URLRequest(url: url))
+        }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         weak var webView: WKWebView?
         let isLoading: Binding<Bool>
+        var onMovieTap: ((URL) -> Void)?
+        var lastLoadedURL: URL?
 
         init(isLoading: Binding<Bool>) { self.isLoading = isLoading }
+
+        // Паттерн страницы фильма: /12345-slug.html или /film/12345-slug.html
+        private func isMovieURL(_ url: URL) -> Bool {
+            let s = url.absoluteString
+            if s.contains("/filmy/") || s.contains("/v1new/") || s.contains("/serialy/") ||
+               s.contains("/top-filmy/") || s.contains("/xfsearch/") { return false }
+            let pattern = #"/\d+-[a-z0-9\-]+\.html"#
+            return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow); return
+            }
+            if navigationAction.navigationType == .linkActivated, isMovieURL(url) {
+                onMovieTap?(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView,
+                     createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+                if isMovieURL(url) { onMovieTap?(url) }
+                else { webView.load(navigationAction.request) }
+            }
+            return nil
+        }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
@@ -267,17 +230,6 @@ struct ScopedWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
-        }
-
-        // target="_blank" → открываем в текущем WebView, не теряем ссылку
-        func webView(_ webView: WKWebView,
-                     createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
-                     windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if navigationAction.targetFrame == nil {
-                webView.load(navigationAction.request)
-            }
-            return nil
         }
     }
 }
