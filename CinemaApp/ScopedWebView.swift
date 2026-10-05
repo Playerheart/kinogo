@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v13",
+            forIdentifier: "ScopedBlock_v14",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -63,6 +63,16 @@ struct ScopedWebView: UIViewRepresentable {
                     [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
                     [data-adblock-hidden="1"] {
                         display: none !important;
+                    }
+
+                    .topnews {
+                        margin: 6px 8px !important;
+                        border-radius: 10px !important;
+                        overflow: hidden !important;
+                    }
+                    .topnews__content {
+                        padding-left: 6px !important;
+                        padding-right: 6px !important;
                     }
                 `;
                 document.head.appendChild(style);
