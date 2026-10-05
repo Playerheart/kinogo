@@ -1,103 +1,175 @@
-import Foundation
+import SwiftUI
 
-enum ExtractionScripts {
+enum CatalogSection: String, CaseIterable, Identifiable {
+    case films = "Фильмы"
+    case news = "Новинки"
+    case top = "Топ"
+    case series = "Сериалы"
 
-    static let detail = """
-    (function() {
-        function norm(u) {
-            if (!u) return '';
-            u = u.trim();
-            if (u.indexOf('//') === 0) return 'https:' + u;
-            return u;
+    var id: String { rawValue }
+    var url: URL {
+        switch self {
+        case .films: return URL(string: "https://mix.kinogo.mu/filmy/")!
+        case .news: return URL(string: "https://mix.kinogo.mu/v1new/")!
+        case .top: return URL(string: "https://mix.kinogo.mu/top-filmy/")!
+        case .series: return URL(string: "https://mix.kinogo.mu/serialy/")!
         }
+    }
+}
 
-        var out = { title: '', poster: '', description: '', players: [], actors: [] };
+struct CatalogView: View {
+    @State private var section: CatalogSection = .films
+    @State private var isLoading = true
+    @State private var path: [Movie] = []
+    @State private var searchQuery = ""
+    @State private var suggestions: [Movie] = []
+    @State private var searchTask: Task<Void, Never>?
+    @State private var currentURL: URL?
 
-        // Title
-        var h1 = document.querySelector('h1');
-        if (h1) out.title = (h1.textContent || '').trim().replace(/\\s+/g, ' ');
-        if (!out.title && document.title) {
-            out.title = document.title.split('|')[0].split('—')[0].trim();
-        }
+    var body: some View {
+        NavigationStack(path: $path) {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                VStack(spacing: 0) {
+                    if currentURL == nil {
+                        sectionBar
+                    } else {
+                        activeSearchBar
+                    }
+                    ZStack {
+                        ScopedWebView(
+                            url: currentURL ?? section.url,
+                            isLoading: $isLoading,
+                            onMovieTap: { url in
+                                let title = url.lastPathComponent
+                                    .replacingOccurrences(of: ".html", with: "")
+                                    .components(separatedBy: "-")
+                                    .dropFirst()
+                                    .joined(separator: " ")
+                                let m = Movie(title: title, url: url.absoluteString,
+                                              poster: "", year: "", rating: "")
+                                path.append(m)
+                            }
+                        )
+                        .id(currentURL ?? section.url)
+                        .edgesIgnoringSafeArea(.bottom)
 
-        // Poster
-        var posterSelectors = [
-            '.movie__poster img', '.film-poster img', '.main_poster img',
-            '.poster img', '.sect-poster img', '[itemprop="image"]'
-        ];
-        for (var ps = 0; ps < posterSelectors.length; ps++) {
-            var p = document.querySelector(posterSelectors[ps]);
-            if (p) {
-                var url = norm(p.src || p.getAttribute('data-src') || p.getAttribute('data-original') || '');
-                if (url && url.indexOf('data:') !== 0) {
-                    out.poster = url;
-                    break;
-                }
-            }
-        }
-
-        // Description
-        var at = document.querySelector('.article__text');
-        if (at) {
-            var clone = at.cloneNode(true);
-            var info = clone.querySelector('.article__info');
-            if (info) info.remove();
-            var imp = clone.querySelector('.article__text-important');
-            if (imp) imp.remove();
-            out.description = (clone.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 3000);
-        }
-
-        // Players
-        var PLAYER_HOSTS = ['cinemar', 'kodik', 'alloha', 'bazon', 'videocdn', 'sibnet', 'aniboom', 'hdvb', 'vadbam', 'pleer'];
-        function isPlayerUrl(u) {
-            if (!u) return false;
-            var low = u.toLowerCase();
-            for (var i = 0; i < PLAYER_HOSTS.length; i++) {
-                if (low.indexOf(PLAYER_HOSTS[i]) !== -1) return true;
-            }
-            return false;
-        }
-        var iframes = document.querySelectorAll('iframe');
-        var seen = {};
-        for (var i = 0; i < iframes.length; i++) {
-            var f = iframes[i];
-            var src = norm(f.getAttribute('src') || '');
-            if (!src) src = norm(f.getAttribute('data-src') || '');
-            if (!src || seen[src]) continue;
-            if (!isPlayerUrl(src)) continue;
-            seen[src] = true;
-            var name = (f.getAttribute('title') || '').trim() || ('Плеер ' + (out.players.length + 1));
-            out.players.push({ name: name, url: src });
-        }
-
-        // Actors — ищем ВСЕ img внутри .persons__section, имя из alt или ближайшего родителя
-        var section = document.querySelector('.persons__section, .persons, .persons__list, .actors, [class*="persons"], [class*="actors"]');
-        var seenA = {};
-        if (section) {
-            var imgs = section.querySelectorAll('img');
-            for (var k = 0; k < imgs.length; k++) {
-                var img = imgs[k];
-                var photo = norm(img.src || img.getAttribute('data-src') || '');
-                if (!photo || photo.indexOf('data:') === 0) continue;
-                if (img.complete && img.naturalWidth === 0) continue;
-
-                var name = (img.alt || '').trim();
-                if (!name) {
-                    var parent = img.closest('a') || img.parentElement;
-                    if (parent) {
-                        var clone = parent.cloneNode(true);
-                        var cimg = clone.querySelector('img');
-                        if (cimg) cimg.remove();
-                        name = (clone.textContent || '').trim().replace(/\\s+/g, ' ');
+                        if isLoading {
+                            ZStack {
+                                Color.black.opacity(0.4).ignoresSafeArea()
+                                ProgressView().scaleEffect(1.6)
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            }
+                        }
                     }
                 }
-                if (!name || name.length > 100 || seenA[name]) continue;
-                seenA[name] = true;
-                out.actors.push({ name: name, photo: photo });
+            }
+            .navigationTitle("Кино")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchQuery, prompt: "Поиск фильма") {
+                ForEach(suggestions) { s in
+                    Label(s.title, systemImage: "film")
+                        .searchCompletion(s.title)
+                }
+            }
+            .onSubmit(of: .search) { performSearch() }
+            .onChange(of: searchQuery) { q in
+                searchTask?.cancel()
+                let trimmed = q.trimmingCharacters(in: .whitespaces)
+                if trimmed.count < 2 {
+                    suggestions = []
+                    return
+                }
+                searchTask = Task {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    if Task.isCancelled { return }
+                    await fetchSuggestions(trimmed)
+                }
+            }
+            .navigationDestination(for: Movie.self) { movie in
+                MovieDetailView(movie: movie)
             }
         }
+    }
 
-        return JSON.stringify(out);
-    })();
-    """
+    private func performSearch() {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        currentURL = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)")
+        isLoading = true
+        searchQuery = ""
+        suggestions = []
+    }
+
+    private func fetchSuggestions(_ query: String) async {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)") else { return }
+        do {
+            let json = try await SiteParser.shared.extract(
+                from: url,
+                js: ExtractionScripts.catalog,
+                waitAfterLoad: 3.0
+            )
+            if Task.isCancelled { return }
+            if let data = json.data(using: .utf8) {
+                let results = try JSONDecoder().decode([Movie].self, from: data)
+                await MainActor.run {
+                    if !Task.isCancelled {
+                        self.suggestions = Array(results.prefix(8))
+                    }
+                }
+            }
+        } catch {
+            // тихо игнорируем
+        }
+    }
+
+    private var sectionBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(CatalogSection.allCases) { s in
+                    Button {
+                        if section != s {
+                            section = s
+                            isLoading = true
+                        }
+                    } label: {
+                        Text(s.rawValue)
+                            .font(.subheadline).bold()
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(section == s ? Color.blue : Color.white.opacity(0.08))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+        }
+        .background(Color.black)
+    }
+
+    private var activeSearchBar: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.white.opacity(0.6))
+            Text("Результаты поиска")
+                .font(.subheadline).bold()
+                .foregroundStyle(.white)
+            Spacer()
+            Button {
+                currentURL = nil
+                isLoading = true
+            } label: {
+                Text("Сбросить")
+                    .font(.subheadline)
+                    .foregroundStyle(.blue)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.black)
+    }
 }
