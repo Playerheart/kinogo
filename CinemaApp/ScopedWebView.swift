@@ -6,6 +6,8 @@ struct ScopedWebView: UIViewRepresentable {
     @Binding var isLoading: Bool
     var onMovieTap: ((URL) -> Void)? = nil
 
+    private static let blockRulesJSON: String = "[{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*b5c1d2e8c9982e3b965a27ac72ru7284cc.com\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl010.pro\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*cvt-s1.agl010.pro\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl007.site\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl008.shop\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*krasnomaga.link\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*temptcdn.com\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*pinco.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*kysh.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*promocode.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*bahis.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*kazanmak.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*googlesyndication.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*doubleclick.*\"},\"action\":{\"type\":\"block\"}}]"
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -14,117 +16,15 @@ struct ScopedWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        let blockRules = """
-        [
-            {"trigger": {"url-filter": ".*", "if-domain": ["*b5c1d2e8c9982e3b965a27ac72ru7284cc.com"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*agl010.pro"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*cvt-s1.agl010.pro"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*agl007.site"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*agl008.shop"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*krasnomaga.link"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*", "if-domain": ["*temptcdn.com"]}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*pinco.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*kysh.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*promocode.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*bahis.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*kazanmak.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*googlesyndication.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*doubleclick.*"}, "action": {"type":inator. "block"}}
-       initial ]
-        """
-        WKContentURLRuleListStore.default().compileContentRuleList(
+        WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "ScopedBlock_v16",
-            encoded =ContentRuleList: blockRules
+            encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
         }
 
-        let js = """
-        (function() {
-            var HIDE_ID = '__scoped_hide__';
+        let js = "(function(){var HIDE_ID='__scoped_hide__';function ensureStyle(){if(document.getElementById(HIDE_ID))return;if(!document.head)return;var s=document.createElement('style');s.id=HIDE_ID;s.innerHTML='a.moved-tg,.moved,.moved2,.app-download,.app-download.full-b,.yellow-banner,.luxury-banner,.usermark__panel,.video-block-strip,.xsort,.xsort--main,.js-xf-groups,.js-xf-selected,.xfilter__groups,.xsort__selected,iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}';document.head.appendChild(s);}function fixTopnews(){var el=document.querySelector('.topnews');if(el){el.style.setProperty('margin','6px 8px','important');el.style.setProperty('border-radius','10px','important');el.style.setProperty('overflow','hidden','important');}var c=document.querySelector('.topnews__content');if(c){c.style.setProperty('padding-left','6px','important');c.style.setProperty('padding-right','6px','important');c.style.setProperty('box-sizing','border-box','important');}}function hideByImage(){var imgs=document.querySelectorAll('img');for(var i=0;i<imgs.length;i++){var img=imgs[i];if(img.getAttribute('data-adblock-hidden'))continue;var src=(img.src||img.getAttribute('data-src')||'').toLowerCase();var isAd=src.indexOf('pinco')!==-1||src.indexOf('kysh')!==-1||src.indexOf('promocode')!==-1||src.indexOf('bahis')!==-1||src.indexOf('b5c1d2e8')!==-1||src.indexOf('agl010')!==-1||src.indexOf('agl007')!==-1||src.indexOf('agl008')!==-1;if(!isAd)continue;img.style.setProperty('display','none','important');img.setAttribute('data-adblock-hidden','1');}}function run(){try{ensureStyle();}catch(e){}try{fixTopnews();}catch(e){}try{hideByImage();}catch(e){}}if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',run);}else{run();}[50,150,400,800,1500,3000,6000].forEach(function(d){setTimeout(run,d);});})();"
 
-            function ensureStyle() {
-                if (document.getElementById(HIDE_ID)) return;
-                if (!document.head) return;
-                var style = document.createElement('style');
-                style.id = HIDE_ID;
-                style.innerHTML = `
-                    a.moved-tg, .moved, .moved2,
-                    .app-download, .app-download.full-b,
-                    .yellow-banner, .luxury-banner,
-                    .usermark__panel, .video-block-strip,
-                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
-                    .xfilter__groups, .xsort__selected,
-                    iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
-                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
-                    iframe[src*="agl007"], iframe[src*="agl008"],
-                    iframe[src*="krasnomaga"],
-                    [id^="adangle-"], [id^="br5g"], [id^="eas-"],
-                    .ad-branding, ins.ad-branding, ins[data-key],
-                    .rocketme_brand_block, .rocketme_brand_block_brand,
-                    .rocketme_brand_site_container, .rocketme_brand_image,
-                    a[href*="kinogo.luxury"], a[href*="luxury"],
-                    img[src*="pinco"], img[src*="kysh"], img[src*="promocode"],
-                    img[src*="agl010"], img[src*="agl007"], img[src*="agl008"],
-                    img[src*="b5c1d2e8"],
-                    [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
-                    [data-adblock-hidden="1"] {
-                        display: none !important;
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-
-            function fixTopnews() {
-                var el = document.querySelector('.topnews');
-                if (el) {
-                    el.style.setProperty('margin', '6px 8px', 'important');
-                    el.style.setProperty('border-radius', '10px', 'important');
-                    el.style.setProperty('overflow', 'hidden', 'important');
-                }
-                var content = document.querySelector('.topnews__content');
-                if (content) {
-                    content.style.setProperty('padding-left', '6px', 'important');
-                    content.style.setProperty('padding-right', '6px', 'important');
-                    content.style.setProperty('box-sizing', 'border-box', 'important');
-                }
-            }
-
-            function hideByImage() {
-                var imgs = document.querySelectorAll('img');
-                for (var i = 0; i < imgs.length; i++) {
-                    var img = imgs[i];
-                    if (img.getAttribute('data-adblock-hidden')) continue;
-                    var src = (img.src || img.getAttribute('data-src') || '').toLowerCase();
-                    var isAd = src.indexOf('pinco') !== -1 ||
-                               src.indexOf('kysh') !== -1 ||
-                               src.indexOf('promocode') !== -1 ||
-                               src.indexOf('bahis') !== -1 ||
-                               src.indexOf('b5c1d2e8') !== -1 ||
-                               src.indexOf('agl010') !== -1 ||
-                               src.indexOf('agl007') !== -1 ||
-                               src.indexOf('agl008') !== -1;
-                    if (!isAd) continue;
-                    img.style.setProperty('display', 'none', 'important');
-                    img.setAttribute('data-adblock-hidden', '1');
-                }
-            }
-
-            function run() {
-                try { ensureStyle(); } catch(e) {}
-                try { fixTopnews(); } catch(e) {}
-                try { hideByImage(); } catch(e) {}
-            }
-
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', run);
-            } else {
-                run();
-            }
-
-            [50, 150, 400, 800, 1500, 3000, 6000].forEach(function(d){ setTimeout(run, d); });
-        })();
-        """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         config.userContentController.addUserScript(script)
 
@@ -140,7 +40,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
-        context.coord url
+        context.coordinator.initialURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
