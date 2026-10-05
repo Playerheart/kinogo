@@ -22,6 +22,8 @@ struct CatalogView: View {
     @State private var isLoading = true
     @State private var path: [Movie] = []
     @State private var searchQuery = ""
+    @State private var suggestions: [Movie] = []
+    @State private var searchTask: Task<Void, Never>?
     @State private var currentURL: URL?
 
     var body: some View {
@@ -29,7 +31,11 @@ struct CatalogView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 VStack(spacing: 0) {
-                    sectionBar
+                    if currentURL == nil {
+                        sectionBar
+                    } else {
+                        activeSearchBar
+                    }
                     ZStack {
                         ScopedWebView(
                             url: currentURL ?? section.url,
@@ -60,8 +66,26 @@ struct CatalogView: View {
             }
             .navigationTitle("Кино")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchQuery, prompt: "Поиск фильма")
+            .searchable(text: $searchQuery, prompt: "Поиск фильма") {
+                ForEach(suggestions) { s in
+                    Label(s.title, systemImage: "film")
+                        .searchCompletion(s.title)
+                }
+            }
             .onSubmit(of: .search) { performSearch() }
+            .onChange(of: searchQuery) { q in
+                searchTask?.cancel()
+                let trimmed = q.trimmingCharacters(in: .whitespaces)
+                if trimmed.count < 2 {
+                    suggestions = []
+                    return
+                }
+                searchTask = Task {
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    if Task.isCancelled { return }
+                    await fetchSuggestions(trimmed)
+                }
+            }
             .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
@@ -74,6 +98,31 @@ struct CatalogView: View {
         let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         currentURL = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)")
         isLoading = true
+        searchQuery = ""
+        suggestions = []
+    }
+
+    private func fetchSuggestions(_ query: String) async {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let url = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)") else { return }
+        do {
+            let json = try await SiteParser.shared.extract(
+                from: url,
+                js: ExtractionScripts.catalog,
+                waitAfterLoad: 3.0
+            )
+            if Task.isCancelled { return }
+            if let data = json.data(using: .utf8) {
+                let results = try JSONDecoder().decode([Movie].self, from: data)
+                await MainActor.run {
+                    if !Task.isCancelled {
+                        self.suggestions = Array(results.prefix(8))
+                    }
+                }
+            }
+        } catch {
+            // тихо игнорируем
+        }
     }
 
     private var sectionBar: some View {
@@ -81,16 +130,15 @@ struct CatalogView: View {
             HStack(spacing: 8) {
                 ForEach(CatalogSection.allCases) { s in
                     Button {
-                        if section != s || currentURL != nil {
+                        if section != s {
                             section = s
-                            currentURL = nil
                             isLoading = true
                         }
                     } label: {
                         Text(s.rawValue)
                             .font(.subheadline).bold()
                             .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(section == s && currentURL == nil ? Color.blue : Color.white.opacity(0.08))
+                            .background(section == s ? Color.blue : Color.white.opacity(0.08))
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                     }
@@ -100,6 +148,28 @@ struct CatalogView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
+        .background(Color.black)
+    }
+
+    private var activeSearchBar: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.white.opacity(0.6))
+            Text("Результаты поиска")
+                .font(.subheadline).bold()
+                .foregroundStyle(.white)
+            Spacer()
+            Button {
+                currentURL = nil
+                isLoading = true
+            } label: {
+                Text("Сбросить")
+                    .font(.subheadline)
+                    .foregroundStyle(.blue)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background(Color.black)
     }
 }
