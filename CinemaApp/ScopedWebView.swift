@@ -87,16 +87,10 @@ struct ScopedWebView: UIViewRepresentable {
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
                 'скачай официальное мобильное', 'скачай мобильное приложение',
                 'подпишись на kinogo', 'будь в курсе актуальных',
-                'без рекламы? вступай',
-                'без рекламы',
-                'всегда доступен',
-                'бесплатно и без рекламы',
-                'будь избранным',
-                'перейти на kinogo',
-                'kinogo.luxury',
-                'kinoGo.luxury',
-                'создай свой киного',
-                'на случай блока',
+                'без рекламы? вступай', 'без рекламы',
+                'всегда доступен', 'бесплатно и без рекламы',
+                'будь избранным', 'перейти на kinogo', 'kinogo.luxury',
+                'создай свой киного', 'на случай блока',
                 'рекомендации к просмотру'
             ];
 
@@ -268,6 +262,8 @@ struct ScopedWebView: UIViewRepresentable {
             let s = url.absoluteString
             if s.contains("/filmy/") || s.contains("/v1new/") || s.contains("/serialy/") ||
                s.contains("/top-filmy/") || s.contains("/xfsearch/") ||
+               s.contains("/actors/") || s.contains("/directors/") ||
+               s.contains("/biografia/") ||
                s.contains("do=search") { return false }
             let pattern = #"/\d+-[a-z0-9\-]+\.html"#
             return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
