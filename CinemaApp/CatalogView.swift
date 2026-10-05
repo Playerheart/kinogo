@@ -20,10 +20,10 @@ enum CatalogSection: String, CaseIterable, Identifiable {
 struct CatalogView: View {
     @State private var section: CatalogSection = .films
     @State private var isLoading = true
-    @State private var selectedMovie: Movie?
+    @State private var path: [Movie] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack {
                 Color.black.ignoresSafeArea()
                 VStack(spacing: 0) {
@@ -40,7 +40,7 @@ struct CatalogView: View {
                                     .joined(separator: " ")
                                 let m = Movie(title: title, url: url.absoluteString,
                                               poster: "", year: "", rating: "")
-                                selectedMovie = m
+                                path.append(m)
                             }
                         )
                         .id(section)
@@ -58,7 +58,7 @@ struct CatalogView: View {
             }
             .navigationTitle("Кино")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $selectedMovie) { movie in
+            .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
         }
