@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v10",
+            forIdentifier: "ScopedBlock_v12",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -45,32 +45,20 @@ struct ScopedWebView: UIViewRepresentable {
                 var style = document.createElement('style');
                 style.id = HIDE_ID;
                 style.innerHTML = `
-                    header, footer, .header, .footer, .nav, .top-menu, .main-menu,
-                    .sidebar, .left-side, .right-side, aside,
-                    #header, #footer, #nav, #sidebar,
-                    .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
-                    .yellow-banner, [class*="yellow-banner"],
-                    [class*="pinco"], [class*="kysh"],
-                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
-                    .xfilter__groups, .xsort__selected,
-                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
-                    iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
-                    [id^="adangle-"], [id^="br5g"], [id^="eas-"],
-                    [class*="ad-branding"], [class*="adangle"],
                     a.moved-tg, .moved, .moved2,
                     .app-download, .app-download.full-b,
-                    .branded, .luxury-banner,
-                    .rocketme_brand_site_container, .rocketme_brand_image,
-                    .rocketme_brand_block_brand, .rocketme_brand_block,
-                    .video-block-strip,
-                    .usermark__panel,
+                    .yellow-banner, .luxury-banner,
+                    .usermark__panel, .video-block-strip,
+                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
+                    .xfilter__groups, .xsort__selected,
+                    iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
+                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
+                    [id^="adangle-"], [id^="br5g"], [id^="eas-"],
+                    img[src*="pinco"], img[src*="kysh"], img[src*="promocode"],
+                    img[src*="agl010"], img[src*="b5c1d2e8"],
                     [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
                     [data-adblock-hidden="1"] {
                         display: none !important;
-                        visibility: hidden !important;
-                        height: 0 !important;
-                        min-height: 0 !important;
-                        max-height: 0 !important;
                     }
                 `;
                 document.head.appendChild(style);
@@ -94,15 +82,9 @@ struct ScopedWebView: UIViewRepresentable {
                 }
             }
 
-            var pending = false;
             function run() {
-                if (pending) return;
-                pending = true;
-                setTimeout(function() {
-                    pending = false;
-                    try { ensureStyle(); } catch(e) {}
-                    try { hideByImage(); } catch(e) {}
-                }, 10);
+                try { ensureStyle(); } catch(e) {}
+                try { hideByImage(); } catch(e) {}
             }
 
             if (document.readyState === 'loading') {
@@ -111,12 +93,7 @@ struct ScopedWebView: UIViewRepresentable {
                 run();
             }
 
-            try {
-                var obs = new MutationObserver(run);
-                obs.observe(document.documentElement, { childList: true, subtree: true });
-            } catch(e) {}
-
-            [50, 200, 600, 1500, 3500, 8000].forEach(function(d){ setTimeout(run, d); });
+            [100, 500, 2000, 6000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -128,9 +105,9 @@ struct ScopedWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        webView.isOpaque = true
-        webView.backgroundColor = .white
-        webView.scrollView.backgroundColor = .white
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.scrollView.backgroundColor = .black
 
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
