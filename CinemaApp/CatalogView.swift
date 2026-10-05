@@ -21,6 +21,8 @@ struct CatalogView: View {
     @State private var section: CatalogSection = .films
     @State private var isLoading = true
     @State private var path: [Movie] = []
+    @State private var searchQuery = ""
+    @State private var currentURL: URL?
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -30,7 +32,7 @@ struct CatalogView: View {
                     sectionBar
                     ZStack {
                         ScopedWebView(
-                            url: section.url,
+                            url: currentURL ?? section.url,
                             isLoading: $isLoading,
                             onMovieTap: { url in
                                 let title = url.lastPathComponent
@@ -43,7 +45,7 @@ struct CatalogView: View {
                                 path.append(m)
                             }
                         )
-                        .id(section)
+                        .id(currentURL ?? section.url)
                         .edgesIgnoringSafeArea(.bottom)
 
                         if isLoading {
@@ -58,10 +60,20 @@ struct CatalogView: View {
             }
             .navigationTitle("Кино")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchQuery, prompt: "Поиск фильма")
+            .onSubmit(of: .search) { performSearch() }
             .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
             }
         }
+    }
+
+    private func performSearch() {
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        currentURL = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)")
+        isLoading = true
     }
 
     private var sectionBar: some View {
@@ -69,15 +81,16 @@ struct CatalogView: View {
             HStack(spacing: 8) {
                 ForEach(CatalogSection.allCases) { s in
                     Button {
-                        if section != s {
+                        if section != s || currentURL != nil {
                             section = s
+                            currentURL = nil
                             isLoading = true
                         }
                     } label: {
                         Text(s.rawValue)
                             .font(.subheadline).bold()
                             .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(section == s ? Color.blue : Color.white.opacity(0.08))
+                            .background(section == s && currentURL == nil ? Color.blue : Color.white.opacity(0.08))
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                     }
