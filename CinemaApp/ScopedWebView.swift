@@ -165,6 +165,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
+        context.coordinator.initialURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
@@ -172,6 +173,8 @@ struct ScopedWebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {
         if uiView.url != url && context.coordinator.lastLoadedURL != url {
             context.coordinator.lastLoadedURL = url
+            context.coordinator.initialURL = url
+            context.coordinator.retryCount = 0
             uiView.load(URLRequest(url: url))
         }
     }
@@ -183,14 +186,17 @@ struct ScopedWebView: UIViewRepresentable {
         let isLoading: Binding<Bool>
         var onMovieTap: ((URL) -> Void)?
         var lastLoadedURL: URL?
+        var initialURL: URL?
+        var retryCount = 0
+        private let maxRetries = 4
 
         init(isLoading: Binding<Bool>) { self.isLoading = isLoading }
 
-        // Паттерн страницы фильма: /12345-slug.html или /film/12345-slug.html
         private func isMovieURL(_ url: URL) -> Bool {
             let s = url.absoluteString
             if s.contains("/filmy/") || s.contains("/v1new/") || s.contains("/serialy/") ||
-               s.contains("/top-filmy/") || s.contains("/xfsearch/") { return false }
+               s.contains("/top-filmy/") || s.contains("/xfsearch/") ||
+               s.contains("do=search") { return false }
             let pattern = #"/\d+-[a-z0-9\-]+\.html"#
             return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
         }
@@ -223,6 +229,7 @@ struct ScopedWebView: UIViewRepresentable {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            retryCount = 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -230,6 +237,13 @@ struct ScopedWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+            // Авторетрай: первый запуск может упасть пока пользователь разрешает сеть
+            guard let u = initialURL, retryCount < maxRetries else { return }
+            retryCount += 1
+            let delay = Double(retryCount) * 1.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                webView.load(URLRequest(url: u))
+            }
         }
     }
 }
