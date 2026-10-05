@@ -12,7 +12,11 @@ final class MovieDetailViewModel: ObservableObject {
         errorText = nil
         do {
             guard let url = URL(string: movie.url) else { throw ParserError.noData }
-            let json = try await SiteParser.shared.extract(from: url, js: ExtractionScripts.detail, waitAfterLoad: 4.0)
+            let json = try await SiteParser.shared.extract(
+                from: url,
+                js: ExtractionScripts.detail,
+                waitAfterLoad: 4.0
+            )
             guard let data = json.data(using: .utf8) else { throw ParserError.invalidResult }
             let d = try JSONDecoder().decode(MovieDetail.self, from: data)
             self.detail = d
@@ -55,10 +59,10 @@ struct MovieDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
 
-                    // Постер + название
                     header
 
-                    // Кнопка "Смотреть"
+                    metaLine
+
                     if vm.selectedPlayer != nil {
                         Button {
                             showPlayer = true
@@ -77,24 +81,30 @@ struct MovieDetailView: View {
                         .buttonStyle(.plain)
                     }
 
-                    // Озвучка
+                    if let d = vm.detail, d.voices.isEmpty == false {
+                        infoRow(title: "Озвучки", value: d.voices)
+                    }
+
                     if let d = vm.detail, d.players.count > 1 {
-                        SectionTitle("Озвучка")
+                        SectionTitle("Плееры")
                         voicePicker(d.players)
                     }
 
-                    // Актёры
                     if let d = vm.detail, !d.actors.isEmpty {
                         SectionTitle("В главных ролях")
                         actorsRow(d.actors)
                     }
 
-                    // Описание
                     if let d = vm.detail, !d.description.isEmpty {
                         SectionTitle("Описание")
                         Text(d.description)
                             .font(.callout)
                             .foregroundStyle(.white.opacity(0.9))
+                    }
+
+                    if let d = vm.detail, !d.related.isEmpty {
+                        SectionTitle("Рекомендации к просмотру")
+                        relatedRow(d.related)
                     }
 
                     if let err = vm.errorText {
@@ -122,12 +132,41 @@ struct MovieDetailView: View {
                 Text(vm.detail?.title.isEmpty == false ? vm.detail!.title : movie.title)
                     .font(.title3).bold().foregroundStyle(.white)
                     .lineLimit(3)
-                if !movie.year.isEmpty {
-                    Text(movie.year).font(.subheadline).foregroundStyle(.gray)
+                if let d = vm.detail, !d.genres.isEmpty {
+                    Text(d.genres)
+                        .font(.caption)
+                        .foregroundStyle(.gray)
+                        .lineLimit(2)
                 }
             }
             Spacer()
         }
+    }
+
+    @ViewBuilder
+    private var metaLine: some View {
+        if let d = vm.detail {
+            let parts = [d.year, d.country, d.duration, d.quality].filter { !$0.isEmpty }
+            if !parts.isEmpty {
+                Text(parts.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+    }
+
+    private func infoRow(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption).foregroundStyle(.gray)
+            Text(value)
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(3)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func voicePicker(_ players: [Player]) -> some View {
@@ -154,16 +193,79 @@ struct MovieDetailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(actors) { a in
-                    VStack(spacing: 6) {
-                        MoviePoster(url: a.photo, width: 80, height: 80, cornerRadius: 40)
-                        Text(a.name)
-                            .font(.caption2)
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .frame(width: 80)
+                    if a.url.isEmpty {
+                        actorCard(a)
+                    } else {
+                        NavigationLink(value: a) {
+                            actorCard(a)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+            }
+        }
+    }
+
+    private func actorCard(_ a: Actor) -> some View {
+        VStack(spacing: 6) {
+            ActorAvatar(actor: a, size: 80)
+            Text(a.name)
+                .font(.caption2)
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .frame(width: 80)
+        }
+    }
+
+    private func relatedRow(_ movies: [Movie]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(movies) { m in
+                    NavigationLink(value: m) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            if m.poster.isEmpty {
+                                ZStack {
+                                    Color.gray.opacity(0.2)
+                                    Image(systemName: "film")
+                                        .foregroundStyle(.white.opacity(0.5))
+                                }
+                                .frame(width: 110, height: 160)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                            } else {
+                                MoviePoster(url: m.poster, width: 110, height: 160, cornerRadius: 8)
+                            }
+                            Text(m.title)
+                                .font(.caption2)
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(3)
+                                .frame(width: 110, alignment: .leading)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+struct ActorAvatar: View {
+    let actor: Actor
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if actor.photo.isEmpty {
+                ZStack {
+                    Circle().fill(Color.blue.opacity(0.5))
+                    Text(String(actor.name.prefix(1)).uppercased())
+                        .font(.system(size: size * 0.4)).bold()
+                        .foregroundStyle(.white)
+                }
+                .frame(width: size, height: size)
+            } else {
+                MoviePoster(url: actor.photo, width: size, height: size, cornerRadius: size / 2)
             }
         }
     }
