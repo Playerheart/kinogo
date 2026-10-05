@@ -19,18 +19,22 @@ struct ScopedWebView: UIViewRepresentable {
             {"trigger": {"url-filter": ".*", "if-domain": ["*b5c1d2e8c9982e3b965a27ac72ru7284cc.com"]}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*", "if-domain": ["*agl010.pro"]}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*", "if-domain": ["*cvt-s1.agl010.pro"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*agl007.site"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*agl008.shop"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*krasnomaga.link"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*temptcdn.com"]}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*pinco.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*kysh.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*promocode.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*bahis.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*kazanmak.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*googlesyndication.*"}, "action": {"type": "block"}},
-            {"trigger": {"url-filter": ".*doubleclick.*"}, "action": {"type": "block"}}
-        ]
+            {"trigger": {"url-filter": ".*doubleclick.*"}, "action": {"type":inator. "block"}}
+       initial ]
         """
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v15",
-            encodedContentRuleList: blockRules
+        WKContentURLRuleListStore.default().compileContentRuleList(
+            forIdentifier: "ScopedBlock_v16",
+            encoded =ContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
         }
@@ -53,13 +57,16 @@ struct ScopedWebView: UIViewRepresentable {
                     .xfilter__groups, .xsort__selected,
                     iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
                     iframe[src*="agl010"], iframe[src*="cvt-s1"],
+                    iframe[src*="agl007"], iframe[src*="agl008"],
+                    iframe[src*="krasnomaga"],
                     [id^="adangle-"], [id^="br5g"], [id^="eas-"],
                     .ad-branding, ins.ad-branding, ins[data-key],
                     .rocketme_brand_block, .rocketme_brand_block_brand,
                     .rocketme_brand_site_container, .rocketme_brand_image,
                     a[href*="kinogo.luxury"], a[href*="luxury"],
                     img[src*="pinco"], img[src*="kysh"], img[src*="promocode"],
-                    img[src*="agl010"], img[src*="b5c1d2e8"],
+                    img[src*="agl010"], img[src*="agl007"], img[src*="agl008"],
+                    img[src*="b5c1d2e8"],
                     [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
                     [data-adblock-hidden="1"] {
                         display: none !important;
@@ -94,7 +101,9 @@ struct ScopedWebView: UIViewRepresentable {
                                src.indexOf('promocode') !== -1 ||
                                src.indexOf('bahis') !== -1 ||
                                src.indexOf('b5c1d2e8') !== -1 ||
-                               src.indexOf('agl010') !== -1;
+                               src.indexOf('agl010') !== -1 ||
+                               src.indexOf('agl007') !== -1 ||
+                               src.indexOf('agl008') !== -1;
                     if (!isAd) continue;
                     img.style.setProperty('display', 'none', 'important');
                     img.setAttribute('data-adblock-hidden', '1');
@@ -131,7 +140,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
-        context.coordinator.initialURL = url
+        context.coord url
         webView.load(URLRequest(url: url))
         return webView
     }
@@ -196,16 +205,13 @@ struct ScopedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
-
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             retryCount = 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
             guard let u = initialURL, retryCount < maxRetries else { return }
