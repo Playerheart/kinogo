@@ -7,7 +7,6 @@ enum CatalogSection: String, CaseIterable, Identifiable {
     case series = "Сериалы"
 
     var id: String { rawValue }
-
     var url: URL {
         switch self {
         case .films: return URL(string: "https://mix.kinogo.mu/filmy/")!
@@ -21,6 +20,7 @@ enum CatalogSection: String, CaseIterable, Identifiable {
 struct CatalogView: View {
     @State private var section: CatalogSection = .films
     @State private var isLoading = true
+    @State private var selectedMovie: Movie?
 
     var body: some View {
         NavigationStack {
@@ -29,15 +29,27 @@ struct CatalogView: View {
                 VStack(spacing: 0) {
                     sectionBar
                     ZStack {
-                        ScopedWebView(url: section.url, isLoading: $isLoading)
-                            .edgesIgnoringSafeArea(.bottom)
-                            .id(section) // пересоздаём WebView при смене раздела
+                        ScopedWebView(
+                            url: section.url,
+                            isLoading: $isLoading,
+                            onMovieTap: { url in
+                                let title = url.lastPathComponent
+                                    .replacingOccurrences(of: ".html", with: "")
+                                    .components(separatedBy: "-")
+                                    .dropFirst()
+                                    .joined(separator: " ")
+                                let m = Movie(title: title, url: url.absoluteString,
+                                              poster: "", year: "", rating: "")
+                                selectedMovie = m
+                            }
+                        )
+                        .id(section)
+                        .edgesIgnoringSafeArea(.bottom)
 
                         if isLoading {
                             ZStack {
-                                Color.black.opacity(0.5).ignoresSafeArea()
-                                ProgressView()
-                                    .scaleEffect(1.6)
+                                Color.black.opacity(0.4).ignoresSafeArea()
+                                ProgressView().scaleEffect(1.6)
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             }
                         }
@@ -46,6 +58,9 @@ struct CatalogView: View {
             }
             .navigationTitle("Кино")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $selectedMovie) { movie in
+                MovieDetailView(movie: movie)
+            }
         }
     }
 
