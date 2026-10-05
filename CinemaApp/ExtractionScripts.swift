@@ -20,15 +20,10 @@ enum ExtractionScripts {
             out.title = document.title.split('|')[0].split('—')[0].trim();
         }
 
-        // Poster — расширенный набор селекторов
+        // Poster
         var posterSelectors = [
-            '.movie__poster img',
-            '.film-poster img',
-            '.main_poster img',
-            '.poster img',
-            '.sect-poster img',
-            '[itemprop="image"]',
-            '.movie-info img'
+            '.movie__poster img', '.film-poster img', '.main_poster img',
+            '.poster img', '.sect-poster img', '[itemprop="image"]'
         ];
         for (var ps = 0; ps < posterSelectors.length; ps++) {
             var p = document.querySelector(posterSelectors[ps]);
@@ -62,12 +57,10 @@ enum ExtractionScripts {
             }
             return false;
         }
-
         var iframes = document.querySelectorAll('iframe');
         var seen = {};
         for (var i = 0; i < iframes.length; i++) {
             var f = iframes[i];
-            // Приоритет: src (актуальный), потом data-src
             var src = norm(f.getAttribute('src') || '');
             if (!src) src = norm(f.getAttribute('data-src') || '');
             if (!src || seen[src]) continue;
@@ -77,49 +70,30 @@ enum ExtractionScripts {
             out.players.push({ name: name, url: src });
         }
 
-        // Actors — расширенный поиск
-        var actorContainers = [
-            '.persons__list',
-            '.persons-list',
-            '.persons',
-            '.actors',
-            '[class*="persons"]',
-            '[class*="actors"]'
-        ];
+        // Actors — ищем ВСЕ img внутри .persons__section, имя из alt или ближайшего родителя
+        var section = document.querySelector('.persons__section, .persons, .persons__list, .actors, [class*="persons"], [class*="actors"]');
         var seenA = {};
-        for (var ac = 0; ac < actorContainers.length; ac++) {
-            var container = document.querySelector(actorContainers[ac]);
-            if (!container) continue;
-            var links = container.querySelectorAll('a');
-            for (var j = 0; j < links.length; j++) {
-                var a = links[j];
-                var img = a.querySelector('img');
-                if (!img) continue;
+        if (section) {
+            var imgs = section.querySelectorAll('img');
+            for (var k = 0; k < imgs.length; k++) {
+                var img = imgs[k];
                 var photo = norm(img.src || img.getAttribute('data-src') || '');
-                if (!photo) continue;
-                var name = (a.textContent || '').trim().replace(/\\s+/g, ' ');
-                if (!name) name = (img.alt || '').trim();
+                if (!photo || photo.indexOf('data:') === 0) continue;
+                if (img.complete && img.naturalWidth === 0) continue;
+
+                var name = (img.alt || '').trim();
+                if (!name) {
+                    var parent = img.closest('a') || img.parentElement;
+                    if (parent) {
+                        var clone = parent.cloneNode(true);
+                        var cimg = clone.querySelector('img');
+                        if (cimg) cimg.remove();
+                        name = (clone.textContent || '').trim().replace(/\\s+/g, ' ');
+                    }
+                }
                 if (!name || name.length > 100 || seenA[name]) continue;
                 seenA[name] = true;
                 out.actors.push({ name: name, photo: photo });
-            }
-            if (out.actors.length > 0) break;
-        }
-
-        // Если ссылок не нашли — ищем одиночные карточки
-        if (out.actors.length === 0) {
-            var cards = document.querySelectorAll('.persons__item, .persons-item, [class*="person__"]');
-            for (var k = 0; k < cards.length; k++) {
-                var card = cards[k];
-                var cimg = card.querySelector('img');
-                if (!cimg) continue;
-                var cphoto = norm(cimg.src || cimg.getAttribute('data-src') || '');
-                if (!cphoto) continue;
-                var cname = (card.textContent || '').trim().replace(/\\s+/g, ' ');
-                if (!cname) cname = (cimg.alt || '').trim();
-                if (!cname || cname.length > 100 || seenA[cname]) continue;
-                seenA[cname] = true;
-                out.actors.push({ name: cname, photo: cphoto });
             }
         }
 
