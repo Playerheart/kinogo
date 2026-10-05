@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v14",
+            forIdentifier: "ScopedBlock_v15",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -64,18 +64,23 @@ struct ScopedWebView: UIViewRepresentable {
                     [data-adblock-hidden="1"] {
                         display: none !important;
                     }
-
-                    .topnews {
-                        margin: 6px 8px !important;
-                        border-radius: 10px !important;
-                        overflow: hidden !important;
-                    }
-                    .topnews__content {
-                        padding-left: 6px !important;
-                        padding-right: 6px !important;
-                    }
                 `;
                 document.head.appendChild(style);
+            }
+
+            function fixTopnews() {
+                var el = document.querySelector('.topnews');
+                if (el) {
+                    el.style.setProperty('margin', '6px 8px', 'important');
+                    el.style.setProperty('border-radius', '10px', 'important');
+                    el.style.setProperty('overflow', 'hidden', 'important');
+                }
+                var content = document.querySelector('.topnews__content');
+                if (content) {
+                    content.style.setProperty('padding-left', '6px', 'important');
+                    content.style.setProperty('padding-right', '6px', 'important');
+                    content.style.setProperty('box-sizing', 'border-box', 'important');
+                }
             }
 
             function hideByImage() {
@@ -98,6 +103,7 @@ struct ScopedWebView: UIViewRepresentable {
 
             function run() {
                 try { ensureStyle(); } catch(e) {}
+                try { fixTopnews(); } catch(e) {}
                 try { hideByImage(); } catch(e) {}
             }
 
@@ -107,7 +113,7 @@ struct ScopedWebView: UIViewRepresentable {
                 run();
             }
 
-            [100, 500, 2000, 6000].forEach(function(d){ setTimeout(run, d); });
+            [50, 150, 400, 800, 1500, 3000, 6000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
