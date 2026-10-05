@@ -10,23 +10,31 @@ struct Movie: Identifiable, Codable, Hashable {
 }
 
 struct Actor: Identifiable, Codable, Hashable {
-    var id: String { name + photo }
+    var id: String { url.isEmpty ? name : url }
     let name: String
     let photo: String
-}
-
-struct MovieDetail: Codable {
-    let title: String
-    let poster: String
-    let description: String
-    let players: [Player]
-    let actors: [Actor]
+    let url: String
 }
 
 struct Player: Identifiable, Codable, Hashable {
     var id: String { url }
     let name: String
     let url: String
+}
+
+struct MovieDetail: Codable {
+    let title: String
+    let poster: String
+    let description: String
+    let year: String
+    let country: String
+    let duration: String
+    let genres: String
+    let quality: String
+    let voices: String
+    let players: [Player]
+    let actors: [Actor]
+    let related: [Movie]
 }
 
 enum ParserError: LocalizedError {
