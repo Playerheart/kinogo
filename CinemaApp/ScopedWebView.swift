@@ -168,7 +168,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction navigationAction: WKNavigationAction,
+                     for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 if isMovieURL(url) { onMovieTap?(url) }
@@ -196,7 +196,7 @@ struct ScopedWebView: UIViewRepresentable {
             retryCount += 1
             let delay = Double(retryCount) * 1.5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.load(URLRequest(url: url))
+                webView.load(URLRequest(url: u))
             }
         }
     }
