@@ -16,7 +16,6 @@ final class SiteParser: NSObject {
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        // Блокируем картинки, медиа и шрифты — нам нужен только HTML (для скорости)
         let blockHeavy: [String: Any] = [
             "trigger": ["url-filter": ".*", "resource-type": ["image", "media", "font"]],
             "action": ["type": "block"]
@@ -41,12 +40,10 @@ final class SiteParser: NSObject {
             pendingCompletion?(.failure(ParserError.cancelled))
             pendingCompletion = nil
         }
-
         return try await withCheckedThrowingContinuation { cont in
             self.pendingJS = js
             self.loadSucceeded = false
             self.pendingCompletion = { result in cont.resume(with: result) }
-
             self.webView.stopLoading()
             self.webView.load(URLRequest(url: url))
 
@@ -83,17 +80,12 @@ extension SiteParser: WKNavigationDelegate {
         loadSucceeded = true
         timeoutTask?.cancel()
         guard let js = pendingJS else { return }
-        // Даём странице время: JS-скрипты рисуют карточки, ленивые картинки грузятся
         finishWithJS(js, wait: 4.0)
     }
-
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        pendingCompletion?(.failure(error))
-        pendingCompletion = nil
+        pendingCompletion?(.failure(error)); pendingCompletion = nil
     }
-
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        pendingCompletion?(.failure(error))
-        pendingCompletion = nil
+        pendingCompletion?(.failure(error)); pendingCompletion = nil
     }
 }
