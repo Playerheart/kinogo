@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v9",
+            forIdentifier: "ScopedBlock_v10",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -59,7 +59,7 @@ struct ScopedWebView: UIViewRepresentable {
                     [class*="ad-branding"], [class*="adangle"],
                     a.moved-tg, .moved, .moved2,
                     .app-download, .app-download.full-b,
-                    .branded, .promo, .luxury-banner,
+                    .branded, .luxury-banner,
                     .rocketme_brand_site_container, .rocketme_brand_image,
                     .rocketme_brand_block_brand, .rocketme_brand_block,
                     .video-block-strip,
@@ -72,122 +72,8 @@ struct ScopedWebView: UIViewRepresentable {
                         min-height: 0 !important;
                         max-height: 0 !important;
                     }
-                    html, body {
-                        background: #000 !important; color: #fff !important;
-                        padding: 0 !important; margin: 0 !important;
-                        max-width: 100% !important; overflow-x: hidden !important;
-                    }
-                    body * { max-width: 100% !important; }
-                    .content, .main, .page, .wrapper, .container,
-                    #content, #main, .content-wrapper, .main-content {
-                        padding: 6px !important; margin: 0 !important;
-                        max-width: 100% !important; width: 100% !important;
-                        background: transparent !important; box-sizing: border-box !important;
-                    }
                 `;
                 document.head.appendChild(style);
-            }
-
-            var BAD_TEXTS = [
-                'pinco', 'promocode', 'bahis yap',
-                'алғашқы бәс', 'жениске жет', 'осында жениске',
-                'скачай официальное мобильное', 'скачай мобильное приложение',
-                'подпишись на kinogo', 'будь в курсе актуальных',
-                'без рекламы? вступай',
-                'всегда доступен', 'бесплатно и без рекламы',
-                'будь избранным', 'перейти на kinogo', 'kinogo.luxury',
-                'создай свой киного, на случай блока',
-                'рекомендации к просмотру'
-            ];
-
-            var PROTECTED_CLASSES = [
-                'content', 'main', 'article', 'box', 'dle-content',
-                'wrapper', 'container', 'page', 'poster', 'persons',
-                'player', 'movie', 'article__body', 'article__text'
-            ];
-
-            var BAD_CLASSES = [
-                'branded', 'rocketme_brand', 'app-download', 'moved', 'moved2',
-                'yellow-banner', 'promo', 'luxury-banner', 'ad-branding',
-                'video-block-strip', 'usermark__panel'
-            ];
-
-            function containsPlayer(el) {
-                if (!el.querySelector) return false;
-                return el.querySelector('video, iframe[src*="cinemar"], iframe[src*="kodik"], iframe[src*="alloha"]') !== null;
-            }
-
-            function isPopup(el) {
-                if (!el || !el.classList) return false;
-                return el.classList.contains('js-person-popup') ||
-                       el.classList.contains('person__popup') ||
-                       el.classList.contains('person__profile');
-            }
-
-            function isProtected(el) {
-                if (!el || !el.classList) return false;
-                var cls = (el.className || '').toString().toLowerCase();
-                for (var i = 0; i < PROTECTED_CLASSES.length; i++) {
-                    if (cls.indexOf(PROTECTED_CLASSES[i]) !== -1) return true;
-                }
-                return false;
-            }
-
-            function hasBadClass(el) {
-                if (!el || !el.classList) return false;
-                var cls = (el.className || '').toString().toLowerCase();
-                for (var i = 0; i < BAD_CLASSES.length; i++) {
-                    if (cls.indexOf(BAD_CLASSES[i].toLowerCase()) !== -1) return true;
-                }
-                return false;
-            }
-
-            function hideByText() {
-                var candidates = document.querySelectorAll('div, section, aside, ins, span, a, strong, p');
-                for (var i = candidates.length - 1; i >= 0; i--) {
-                    var el = candidates[i];
-                    if (el.getAttribute('data-adblock-hidden')) continue;
-                    if (el.style && el.style.display === 'none') continue;
-                    if (containsPlayer(el)) continue;
-                    if (isPopup(el)) continue;
-                    if (isProtected(el)) continue;
-
-                    var r = el.getBoundingClientRect();
-                    if (r.height > 300 || r.height < 20) continue;
-                    if (r.width < 100) continue;
-
-                    var text = (el.textContent || '').toLowerCase();
-                    if (text.length < 5 || text.length > 250) continue;
-
-                    for (var j = 0; j < BAD_TEXTS.length; j++) {
-                        if (text.indexOf(BAD_TEXTS[j].toLowerCase()) !== -1) {
-                            el.style.setProperty('display', 'none', 'important');
-                            el.setAttribute('data-adblock-hidden', '1');
-                            break;
-                        }
-                    }
-                }
-            }
-
-            function hideByClass() {
-                var all = document.querySelectorAll('div, section, aside, a, iframe, ins');
-                for (var i = 0; i < all.length; i++) {
-                    var el = all[i];
-                    if (el.getAttribute('data-adblock-hidden')) continue;
-                    if (containsPlayer(el)) continue;
-                    if (isPopup(el)) continue;
-                    if (isProtected(el)) continue;
-
-                    var idAttr = (el.id || '').toLowerCase();
-                    var isBadId = idAttr.indexOf('adangle') === 0 ||
-                                  idAttr.indexOf('br5g') === 0 ||
-                                  idAttr.indexOf('eas-') === 0;
-
-                    if (isBadId || hasBadClass(el)) {
-                        el.style.setProperty('display', 'none', 'important');
-                        el.setAttribute('data-adblock-hidden', '1');
-                    }
-                }
             }
 
             function hideByImage() {
@@ -196,25 +82,15 @@ struct ScopedWebView: UIViewRepresentable {
                     var img = imgs[i];
                     if (img.getAttribute('data-adblock-hidden')) continue;
                     var src = (img.src || img.getAttribute('data-src') || '').toLowerCase();
-                    var isAd = src.indexOf('pinco') !== -1 || src.indexOf('kysh') !== -1 ||
-                               src.indexOf('promocode') !== -1 || src.indexOf('bahis') !== -1 ||
-                               src.indexOf('b5c1d2e8') !== -1 || src.indexOf('agl010') !== -1;
+                    var isAd = src.indexOf('pinco') !== -1 ||
+                               src.indexOf('kysh') !== -1 ||
+                               src.indexOf('promocode') !== -1 ||
+                               src.indexOf('bahis') !== -1 ||
+                               src.indexOf('b5c1d2e8') !== -1 ||
+                               src.indexOf('agl010') !== -1;
                     if (!isAd) continue;
                     img.style.setProperty('display', 'none', 'important');
-                    var p = img.parentElement;
-                    var depth = 0;
-                    while (p && depth < 5) {
-                        if (p.getAttribute('data-adblock-hidden')) break;
-                        if (isProtected(p)) break;
-                        if (p.tagName === 'A' && p.href && p.href.indexOf('.html') !== -1) break;
-                        var pr = p.getBoundingClientRect();
-                        if (pr.height > 40 && pr.height < 500 && pr.width > 150) {
-                            p.style.setProperty('display', 'none', 'important');
-                            p.setAttribute('data-adblock-hidden', '1');
-                            break;
-                        }
-                        p = p.parentElement; depth++;
-                    }
+                    img.setAttribute('data-adblock-hidden', '1');
                 }
             }
 
@@ -225,8 +101,6 @@ struct ScopedWebView: UIViewRepresentable {
                 setTimeout(function() {
                     pending = false;
                     try { ensureStyle(); } catch(e) {}
-                    try { hideByText(); } catch(e) {}
-                    try { hideByClass(); } catch(e) {}
                     try { hideByImage(); } catch(e) {}
                 }, 10);
             }
@@ -242,7 +116,7 @@ struct ScopedWebView: UIViewRepresentable {
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
 
-            [50, 150, 400, 800, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
+            [50, 200, 600, 1500, 3500, 8000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -254,9 +128,9 @@ struct ScopedWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        webView.isOpaque = false
-        webView.backgroundColor = .black
-        webView.scrollView.backgroundColor = .black
+        webView.isOpaque = true
+        webView.backgroundColor = .white
+        webView.scrollView.backgroundColor = .white
 
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
