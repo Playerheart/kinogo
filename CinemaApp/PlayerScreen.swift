@@ -7,8 +7,12 @@ struct PlayerScreen: View {
     @State private var isLoading = true
 
     @State private var voices: [String] = []
+    @State private var qualities: [String] = []
     @State private var showVoicePicker = false
+    @State private var showQualityPicker = false
     @State private var pendingVoice: String? = nil
+    @State private var pendingQuality: String? = nil
+    @State private var cmdReadQualities = 0
 
     @State private var capturedVideoURL: URL?
     @State private var showCaptureAlert = false
@@ -36,9 +40,14 @@ struct PlayerScreen: View {
                             showCaptureAlert = true
                         },
                         onVoicesDetected: { list in
-                            voices = list
+                            if !list.isEmpty { voices = list }
                         },
-                        voiceToSelect: $pendingVoice
+                        onQualitiesDetected: { list in
+                            if !list.isEmpty { qualities = list }
+                        },
+                        pendingVoice: $pendingVoice,
+                        pendingQuality: $pendingQuality,
+                        cmdReadQualities: $cmdReadQualities
                     )
                     .edgesIgnoringSafeArea(.bottom)
                 }
@@ -51,8 +60,7 @@ struct PlayerScreen: View {
                         VStack(spacing: 12) {
                             ProgressView().tint(.white).scaleEffect(1.4)
                             Text("Скачивание…")
-                                .foregroundStyle(.white)
-                                .font(.footnote)
+                                .foregroundStyle(.white).font(.footnote)
                         }
                         .padding(24)
                         .background(Color.black.opacity(0.8))
@@ -75,13 +83,18 @@ struct PlayerScreen: View {
                         }
                     }
                     Button {
+                        qualities = []
+                        cmdReadQualities &+= 1
+                        showQualityPicker = true
+                    } label: {
+                        Image(systemName: "tv")
+                    }
+                    Button {
                         showManualURLInput = true
                     } label: {
                         Image(systemName: "link")
                     }
                     Button {
-                        downloadedFile = nil
-                        manualURLText = ""
                         if let url = URL(string: player.url) {
                             isLoading = true
                             NotificationCenter.default.post(name: .reloadPlayer, object: url)
@@ -91,10 +104,18 @@ struct PlayerScreen: View {
                     }
                 }
             }
-            .confirmationDialog("Выберите озвучку", isPresented: $showVoicePicker, titleVisibility: .visible) {
+            .confirmationDialog("Озвучка", isPresented: $showVoicePicker, titleVisibility: .visible) {
                 ForEach(voices, id: \.self) { v in
-                    Button(v) {
-                        pendingVoice = v
+                    Button(v) { pendingVoice = v }
+                }
+                Button("Отмена", role: .cancel) {}
+            }
+            .confirmationDialog("Качество", isPresented: $showQualityPicker, titleVisibility: .visible) {
+                if qualities.isEmpty {
+                    Text("Сканируем доступные качества…")
+                } else {
+                    ForEach(qualities, id: \.self) { q in
+                        Button(q) { pendingQuality = q }
                     }
                 }
                 Button("Отмена", role: .cancel) {}
@@ -104,19 +125,16 @@ struct PlayerScreen: View {
                     nativePlayerURL = url
                     showNativePlayer = true
                 }
-                Button("Скачать файл") {
-                    startDownload(url)
-                }
+                Button("Скачать файл") { startDownload(url) }
                 Button("Отмена", role: .cancel) {}
             } message: { url in
                 Text(url.absoluteString)
             }
             .fullScreenCover(isPresented: $showNativePlayer) {
                 if let url = nativePlayerURL {
-                    ZStack(alignment: .topTrailing) {
+                    ZStack {
                         Color.black.ignoresSafeArea()
-                        NativePlayerView(url: url)
-                            .ignoresSafeArea()
+                        NativePlayerView(url: url).ignoresSafeArea()
                     }
                 }
             }
@@ -136,7 +154,7 @@ struct PlayerScreen: View {
                     }
                     manualURLText = ""
                 }
-                Button("Отмена",(at role: .cancel) { manualURLText = "" }
+                Button("Отмена", role: .cancel) { manualURLText = "" }
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
             }
@@ -146,14 +164,12 @@ struct PlayerScreen: View {
     private func startDownload(_ url: URL) {
         downloadingURL = url
         URLSession.shared.downloadTask(with: url) { localURL, _, _ in
-            DispatchQueue.main.async {
-                downloadingURL = nil
-            }
+            DispatchQueue.main.async { downloadingURL = nil }
             guard let localURL = localURL else { return }
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let name = url.lastPathComponent.isEmpty ? "video.mp4" : url.lastPathComponent
             let dest = docs.appendingPathComponent(name)
-            try? FileManager.default.removeItem: dest)
+            try? FileManager.default.removeItem(at: dest)
             try? FileManager.default.moveItem(at: localURL, to: dest)
             DispatchQueue.main.async {
                 downloadedFile = dest
@@ -172,7 +188,10 @@ struct RawPlayerWebView: UIViewRepresentable {
     @Binding var isLoading: Bool
     var onVideoURLTap: ((URL) -> Void)? = nil
     var onVoicesDetected: (([String]) -> Void)? = nil
-    @Binding var voiceToSelect: String?
+    var onQualitiesDetected: (([String]) -> Void)? = nil
+    @Binding var pendingVoice: String?
+    @Binding var pendingQuality: String?
+    @Binding var cmdReadQualities: Int
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -183,101 +202,98 @@ struct RawPlayerWebView: UIViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         let hunterJS = """
-        (function() {
-            var isCinemar = (location.hostname || '').indexOf('cinemar') !== -1;
-            if (!isCinemar || window.__videoHunterInstalled) return;
-            window.__videoHunterInstalled = true;
+        (function(){
+            var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
+            if (!isCinemar || window.__hunterInstalled) return;
+            window.__hunterInstalled = true;
 
-            function reportVideo(url) {
-                if (!url) return;
-                var low = url.toLowerCase();
-                if (low.indexOf('.mp4') === -1 && low.indexOf('.m3u8') === -1 &&
-                    low.indexOf('.mkv') === -1 && low.indexOf('.webm') === -1) return;
-                try { window.webkit.messageHandlers.videoURL.postMessage(url); } catch(e) {}
+            function reportVideo(u){
+                if(!u) return;
+                var l=u.toLowerCase();
+                if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
+                try{window.webkit.messageHandlers.videoURL.postMessage(u);}catch(e){}
             }
 
-            try {
-                var _fetch = window.fetch;
-                window.fetch = function(input, init) {
-                    try { var u = (typeof input === 'string') ? input : (input && input.url); if (u) reportVideo(u); } catch(e) {}
-                    return _fetch.apply(this, arguments);
-                };
-            } catch(e) {}
-            try {
-                var _open = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, u) {
-                    try { if (u) reportVideo(u); } catch(e) {}
-                    return _open.apply(this, arguments);
-                };
-            } catch(e) {}
-            try {
-                var _click = HTMLAnchorElement.prototype.click;
-                HTMLAnchorElement.prototype.click = function() {
-                    try { var h = this.href || ''; if (h) reportVideo(h); } catch(e) {}
-                    return _click.apply(this, arguments);
-                };
-            } catch(e) {}
+            try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
+            try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
+            try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
 
-            function sendVoices() {
-                try {
-                    var btns = document.querySelectorAll('.playlist-dropdown button');
-                    var arr = [];
-                    for (var i = 0; i < btns.length; i++) {
-                        var t = (btns[i].textContent || '').trim();
-                        if (t && arr.indexOf(t) === -1) arr.push(t);
+            function readVoices(){
+                try{
+                    var btns=document.querySelectorAll('.playlist-dropdown button');
+                    var arr=[];
+                    for(var i=0;i<btns.length;i++){
+                        var t=(btns[i].textContent||'').trim();
+                        if(t&&arr.indexOf(t)===-1) arr.push(t);
                     }
-                    if (arr.length > 0) {
-                        window.webkit.messageHandlers.voiceList.postMessage(arr);
-                    }
-                } catch(e) {}
+                    if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
+                }catch(e){}
             }
-            setTimeout(sendVoices, 2000);
-            setTimeout(sendVoices, 5000);
-            setTimeout(sendVoices, 9000);
 
-            window.addEventListener('message', function(e) {
-                if (!e.data || e.data.type !== 'selectVoice') return;
-                var text = e.data.text;
-                try {
-                    var title = document.querySelector('.playlist-title');
-                    if (title) title.click();
-                    setTimeout(function() {
-                        var all = document.querySelectorAll('.playlist-dropdown button');
-                        for (var i = 0; i < all.length; i++) {
-                            if ((all[i].textContent || '').trim() === text) {
-                                all[i].click();
-                                return;
-                            }
+            window.__hunterReadQualities = function(){
+                var dl=document.getElementById('player_control_pl-download');
+                if(dl){
+                    try{dl.click();}catch(e){}
+                    try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
+                }
+                setTimeout(function(){
+                    var map={};
+                    var all=document.querySelectorAll('div,button,li,a,span');
+                    for(var i=0;i<all.length;i++){
+                        var el=all[i];
+                        var r=el.getBoundingClientRect();
+                        if(r.width<20||r.height<10) continue;
+                        var t=(el.textContent||'').trim();
+                        if(t.length<3||t.length>30) continue;
+                        if(!/^\\d{3,4}p(\\s|$)/i.test(t)) continue;
+                        if(!map[t]||el.children.length<map[t].children.length) map[t]=el;
+                    }
+                    var arr=Object.keys(map);
+                    try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
+                },1200);
+            };
+
+            window.__hunterSelectQuality = function(text){
+                var dl=document.getElementById('player_control_pl-download');
+                if(dl){
+                    try{dl.click();}catch(e){}
+                    try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
+                }
+                setTimeout(function(){
+                    var all=document.querySelectorAll('div,button,li,a,span');
+                    var best=null;
+                    for(var i=0;i<all.length;i++){
+                        var el=all[i];
+                        var r=el.getBoundingClientRect();
+                        if(r.width<20||r.height<10) continue;
+                        var t=(el.textContent||'').trim();
+                        if(t!==text) continue;
+                        if(!best||el.children.length<best.children.length) best=el;
+                    }
+                    if(best){
+                        try{best.click();}catch(e){}
+                        try{best.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
+                    }
+                },600);
+            };
+
+            window.addEventListener('message',function(e){
+                if(!e.data||!e.data.type) return;
+                if(e.data.type==='selectVoice'){
+                    var title=document.querySelector('.playlist-title');
+                    if(title) title.click();
+                    setTimeout(function(){
+                        var all=document.querySelectorAll('.playlist-dropdown button');
+                        for(var i=0;i<all.length;i++){
+                            if((all[i].textContent||'').trim()===e.data.text){all[i].click();return;}
                         }
-                    }, 250);
-                } catch(e) {}
+                    },250);
+                }
             });
 
-            setTimeout(function() {
-                if (window.__dlClicked) return;
-                window.__dlClicked = true;
-                var btn = document.getElementById('player_control_pl-download');
-                if (btn) {
-                    btn.click();
-                    try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                }
-            }, 3000);
-
-            setTimeout(function() {
-                if (window.__q720Clicked) return;
-                var all = document.querySelectorAll('button, div, span, li, a');
-                for (var i = 0; i < all.length; i++) {
-                    var el = all[i];
-                    if (el.children.length > 2) continue;
-                    var t = (el.textContent || '').trim().toLowerCase();
-                    if (t === '720p' || t === '720' || t.indexOf('720p') === 0) {
-                        window.__q720Clicked = true;
-                        try { el.click(); } catch(e) {}
-                        try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        return;
-                    }
-                }
-            }, 5000);
+            setTimeout(readVoices,2000);
+            setTimeout(readVoices,5000);
+            setTimeout(readVoices,9000);
         })();
         """
         let hunterScript = WKUserScript(source: hunterJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -285,6 +301,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
+        config.userContentController.add(context.coordinator, name: "qualityList")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -296,48 +313,70 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         context.coordinator.onVideoURLTap = onVideoURLTap
         context.coordinator.onVoicesDetected = onVoicesDetected
+        context.coordinator.onQualitiesDetected = onQualitiesDetected
         context.coordinator.webView = webView
         context.coordinator.load(url: url)
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        guard let voice = voiceToSelect, !voice.isEmpty else { return }
-        let escaped = voice
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "'", with: "\\'")
-        let js = """
-        (function retrySelect(count){
-            var iframes = document.querySelectorAll('iframe');
-            var sent = false;
-            for (var i = 0; i < iframes.length; i++) {
-                try {
-                    if (iframes[i].contentWindow) {
-                        iframes[i].contentWindow.postMessage({type:'selectVoice', text:'\(escaped)'}, '*');
-                        sent = true;
-                    }
-                } catch(e) {}
-            }
-            if (!sent && count < 10) {
-                setTimeout(function(){ retrySelect(count+1); }, 300);
-            }
-        })(0);
-        """
-        uiView.evaluateJavaScript(js, completionHandler: nil)
-        DispatchQueue.main.async {
-            voiceToSelect = nil
+        if let voice = pendingVoice, !voice.isEmpty {
+            let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
+                           .replacingOccurrences(of: "'", with: "\\'")
+            let js = """
+            (function retry(n){
+                var frames=document.querySelectorAll('iframe');
+                for(var i=0;i<frames.length;i++){
+                    try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
+                }
+                if(n<10) setTimeout(function(){retry(n+1);},300);
+            })(0);
+            """
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+            DispatchQueue.main.async { pendingVoice = nil }
+        }
+
+        if cmdReadQualities > context.coordinator.lastCmdRead {
+            context.coordinator.lastCmdRead = cmdReadQualities
+            let js = """
+            (function retry(n){
+                var frames=document.querySelectorAll('iframe');
+                for(var i=0;i<frames.length;i++){
+                    try{frames[i].contentWindow.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
+                    try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
+                }
+                if(n<5) setTimeout(function(){retry(n+1);},400);
+            })(0);
+            """
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        if let q = pendingQuality, !q.isEmpty {
+            let esc = q.replacingOccurrences(of: "\\", with: "\\\\")
+                       .replacingOccurrences(of: "'", with: "\\'")
+            let js = """
+            (function retry(n){
+                var frames=document.querySelectorAll('iframe');
+                for(var i=0;i<frames.length;i++){
+                    try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
+                }
+                if(n<5) setTimeout(function(){retry(n+1);},400);
+            })(0);
+            """
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+            DispatchQueue.main.async { pendingQuality = nil }
         }
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(isLoading: $isLoading)
-    }
+    func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         let isLoading: Binding<Bool>
         var onVideoURLTap: ((URL) -> Void)?
         var onVoicesDetected: (([String]) -> Void)?
+        var onQualitiesDetected: (([String]) -> Void)?
+        var lastCmdRead: Int = 0
         private var observer: NSObjectProtocol?
 
         init(isLoading: Binding<Bool>) {
@@ -363,14 +402,18 @@ struct RawPlayerWebView: UIViewRepresentable {
             webView.load(request)
         }
 
-        func userContentController(_ userContentController: WKUserContentController,
-                                   didReceive message: WKScriptMessage) {
-            if message.name == "videoURL" {
+        func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+            switch message.name {
+            case "videoURL":
                 guard let str = message.body as? String, let url = URL(string: str) else { return }
                 DispatchQueue.main.async { self.onVideoURLTap?(url) }
-            } else if message.name == "voiceList" {
+            case "voiceList":
                 guard let arr = message.body as? [String] else { return }
                 DispatchQueue.main.async { self.onVoicesDetected?(arr) }
+            case "qualityList":
+                guard let arr = message.body as? [String] else { return }
+                DispatchQueue.main.async { self.onQualitiesDetected?(arr) }
+            default: break
             }
         }
 
@@ -383,14 +426,8 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url else {
-                decisionHandler(.allow); return
-            }
-            if isVideoURL(url) {
-                onVideoURLTap?(url)
-                decisionHandler(.cancel)
-                return
-            }
+            guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
+            if isVideoURL(url) { onVideoURLTap?(url); decisionHandler(.cancel); return }
             decisionHandler(.allow)
         }
 
@@ -399,11 +436,8 @@ struct RawPlayerWebView: UIViewRepresentable {
                      for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
-                if isVideoURL(url) {
-                    onVideoURLTap?(url)
-                } else {
-                    webView.load(navigationAction.request)
-                }
+                if isVideoURL(url) { onVideoURLTap?(url) }
+                else { webView.load(navigationAction.request) }
             }
             return nil
         }
