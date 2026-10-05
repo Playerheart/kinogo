@@ -14,6 +14,7 @@ struct ScopedWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
+        // Сеть: блокируем рекламные домены
         let blockRules = """
         [
             {"trigger": {"url-filter": ".*", "if-domain": ["*b5c1d2e8c9982e3b965a27ac72ru7284cc.com"]}, "action": {"type": "block"}},
@@ -29,59 +30,86 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v7",
+            forIdentifier: "ScopedBlock_v8",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
         }
 
+        // CSS-инъекция ДО парсинга HTML — элементы рекламы не успевают появиться
+        let cssEarly = """
+        (function() {
+            var style = document.createElement('style');
+            style.id = '__scoped_early__';
+            style.innerHTML = `
+                header, footer, .header, .footer, .nav, .top-menu, .main-menu,
+                .sidebar, .left-side, .right-side, aside,
+                #header, #footer, #nav, #sidebar,
+                .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
+                .yellow-banner, [class*="yellow-banner"],
+                [class*="pinco" i], [class*="kysh" i],
+                .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
+                .xfilter__groups, .xsort__selected,
+                iframe[src*="agl010"], iframe[src*="cvt-s1"],
+                iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
+                #adangle-a6dd61a3-f1e1-4f68-993a-d6d4e9f87fff-click,
+                [id^="adangle-"], [id^="br5g"], [id^="eas-"],
+                [class*="ad-branding"], [class*="adangle"],
+                a.moved-tg, .moved, .moved2,
+                .app-download, .app-download.full-b,
+                .branded, .promo, .luxury-banner,
+                .rocketme_brand_site_container, .rocketme_brand_image,
+                .rocketme_brand_block_brand, .rocketme_brand_block,
+                .video-block-strip,
+                .regtg__text, .regtg__telegram, .regtg,
+                .usermark__panel, .js-usermark,
+                .franchise,
+                [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
+                [data-adblock-hidden="1"] {
+                    display: none !important;
+                    visibility: hidden !important;
+                    height: 0 !important;
+                    min-height: 0 !important;
+                    max-height: 0 !important;
+                    margin: 0 !important;
+                    padding: 0 !important;
+                    border: 0 !important;
+                }
+                html, body {
+                    background: #000 !important; color: #fff !important;
+                    padding: 0 !important; margin: 0 !important;
+                    max-width: 100% !important; overflow-x: hidden !important;
+                }
+                body * { max-width: 100% !important; }
+                .content, .main, .page, .wrapper, .container,
+                #content, #main, .content-wrapper, .main-content {
+                    padding: 6px !important; margin: 0 !important;
+                    max-width: 100% !important; width: 100% !important;
+                    background: transparent !important; box-sizing: border-box !important;
+                }
+            `;
+            // Вставляем как можно раньше
+            if (document.head) {
+                document.head.appendChild(style);
+            } else if (document.documentElement) {
+                document.documentElement.appendChild(style);
+            } else {
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.head.appendChild(style);
+                });
+            }
+        })();
+        """
+        let earlyScript = WKUserScript(
+            source: cssEarly,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(earlyScript)
+
+        // JS для динамических элементов (то, что появляется позже)
         let js = """
         (function() {
-            var HIDE_ID = '__scoped_hide__';
-
-            function ensureStyle() {
-                if (document.getElementById(HIDE_ID)) return;
-                var style = document.createElement('style');
-                style.id = HIDE_ID;
-                style.innerHTML = `
-                    header, footer, .header, .footer, .nav, .top-menu, .main-menu,
-                    .sidebar, .left-side, .right-side, aside,
-                    #header, #footer, #nav, #sidebar,
-                    .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
-                    .yellow-banner, [class*="yellow-banner"],
-                    [class*="pinco" i], [class*="kysh" i],
-                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
-                    .xfilter__groups, .xsort__selected,
-                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
-                    .app-download, .app-download.full-b,
-                    .moved, .moved2, .branded, .promo, .luxury-banner,
-                    .rocketme_brand_site_container, .rocketme_brand_image,
-                    .rocketme_brand_block_brand,
-                    [id^="br5g"], [id^="adangle-"], [id^="eas-"],
-                    [class*="ad-branding"],
-                    [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
-                    [data-adblock-hidden="1"] {
-                        display: none !important;
-                        visibility: hidden !important;
-                        height: 0 !important;
-                        min-height: 0 !important;
-                    }
-                    html, body {
-                        background: #000 !important; color: #fff !important;
-                        padding: 0 !important; margin: 0 !important;
-                        max-width: 100% !important; overflow-x: hidden !important;
-                    }
-                    body * { max-width: 100% !important; }
-                    .content, .main, .page, .wrapper, .container,
-                    #content, #main, .content-wrapper, .main-content {
-                        padding: 6px !important; margin: 0 !important;
-                        max-width: 100% !important; width: 100% !important;
-                        background: transparent !important; box-sizing: border-box !important;
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-
             var BAD_TEXTS = [
                 'pinco', 'promocode', 'bahis yap',
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
@@ -94,7 +122,6 @@ struct ScopedWebView: UIViewRepresentable {
                 'рекомендации к просмотру'
             ];
 
-            // Классы-контейнеры, которые НЕЛЬЗЯ скрывать целиком
             var PROTECTED_CLASSES = [
                 'content', 'main', 'article', 'box', 'dle-content',
                 'wrapper', 'container', 'page', 'poster', 'persons',
@@ -104,7 +131,8 @@ struct ScopedWebView: UIViewRepresentable {
             var BAD_CLASSES = [
                 'branded', 'rocketme_brand', 'app-download', 'moved', 'moved2',
                 'yellow-banner', 'promo', 'luxury-banner', 'ad-branding',
-                'video-block-strip', 'usermark__panel'
+                'video-block-strip', 'usermark__panel',
+                'regtg__telegram', 'regtg__text'
             ];
 
             function containsPlayer(el) {
@@ -147,7 +175,6 @@ struct ScopedWebView: UIViewRepresentable {
                     if (isPopup(el)) continue;
                     if (isProtected(el)) continue;
 
-                    // Не скрываем большие контейнеры: высота < 300, текст < 250 символов
                     var r = el.getBoundingClientRect();
                     if (r.height > 300 || r.height < 20) continue;
                     if (r.width < 100) continue;
@@ -166,14 +193,20 @@ struct ScopedWebView: UIViewRepresentable {
             }
 
             function hideByClass() {
-                var all = document.querySelectorAll('div, section, aside, a');
+                var all = document.querySelectorAll('div, section, aside, a, iframe, ins');
                 for (var i = 0; i < all.length; i++) {
                     var el = all[i];
                     if (el.getAttribute('data-adblock-hidden')) continue;
                     if (containsPlayer(el)) continue;
                     if (isPopup(el)) continue;
                     if (isProtected(el)) continue;
-                    if (hasBadClass(el)) {
+
+                    var idAttr = (el.id || '').toLowerCase();
+                    var isBadId = idAttr.indexOf('adangle') === 0 ||
+                                  idAttr.indexOf('br5g') === 0 ||
+                                  idAttr.indexOf('eas-') === 0;
+
+                    if (isBadId || hasBadClass(el)) {
                         el.style.setProperty('display', 'none', 'important');
                         el.setAttribute('data-adblock-hidden', '1');
                     }
@@ -209,32 +242,23 @@ struct ScopedWebView: UIViewRepresentable {
                 }
             }
 
-            function markPersons() {
-                var persons = document.querySelectorAll('a.js-person');
-                for (var i = 0; i < persons.length; i++) {
-                    persons[i].setAttribute('data-person-bound', '1');
-                }
-            }
-
             var pending = false;
             function run() {
                 if (pending) return;
                 pending = true;
                 setTimeout(function() {
                     pending = false;
-                    ensureStyle();
                     hideByText();
                     hideByClass();
                     hideByImage();
-                    markPersons();
-                }, 250);
+                }, 50);
             }
             run();
             try {
                 var obs = new MutationObserver(run);
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
-            [100, 500, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
+            [50, 150, 400, 800, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
         let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
