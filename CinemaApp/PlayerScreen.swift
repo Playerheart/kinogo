@@ -45,7 +45,16 @@ struct RawPlayerWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
-        webView.load(URLRequest(url: url))
+
+        // Ключевое: Referer = страница киносайта. Без него cinemar.cc → 404
+        var request = URLRequest(url: url)
+        request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
+        request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        webView.load(request)
         return webView
     }
 
