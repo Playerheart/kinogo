@@ -9,34 +9,33 @@ struct Movie: Identifiable, Codable, Hashable {
     let rating: String
 }
 
-struct Player: Identifiable, Codable, Hashable {
-    var id: String { url + "|" + name }
+struct Actor: Identifiable, Codable, Hashable {
+    var id: String { name + photo }
     let name: String
-    let url: String
-}
-
-struct DownloadOption: Identifiable, Codable, Hashable {
-    var id: String { url }
-    let quality: String
-    let url: String
+    let photo: String
 }
 
 struct MovieDetail: Codable {
     let title: String
-    let description: String
     let poster: String
+    let description: String
     let players: [Player]
-    let downloads: [DownloadOption]
+    let actors: [Actor]
+}
+
+struct Player: Identifiable, Codable, Hashable {
+    var id: String { url }
+    let name: String
+    let url: String
 }
 
 enum ParserError: LocalizedError {
     case cancelled, timeout, jsError(String), invalidResult, noData
-
     var errorDescription: String? {
         switch self {
         case .cancelled: return "Отменено"
         case .timeout: return "Превышено время ожидания"
-        case .jsError(let s): return "Ошибка скрипта: \(s)"
+        case .jsError(let s): return "Ошибка: \(s)"
         case .invalidResult: return "Неверный формат данных"
         case .noData: return "Данные не найдены"
         }
