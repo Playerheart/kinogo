@@ -44,6 +44,7 @@ enum ExtractionScripts {
 
             var imgSrc = img.src || img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy') || '';
             if (!imgSrc || imgSrc.indexOf('data:') === 0) continue;
+            if (imgSrc.indexOf('dot.gif') !== -1) continue;
 
             var w = img.naturalWidth || parseInt(img.getAttribute('width')) || 0;
             var h = img.naturalHeight || parseInt(img.getAttribute('height')) || 0;
@@ -88,14 +89,32 @@ enum ExtractionScripts {
     (function() {
         function norm(u) {
             if (!u) return '';
-            u = u.trim();
+            u = String(u).trim();
             if (u.indexOf('//') === 0) return 'https:' + u;
+            if (u.charAt(0) === '/') return 'https://mix.kinogo.mu' + u;
             return u;
         }
 
-        var out = { title: '', poster: '', description: '', players: [], actors: [] };
+        function bgUrl(el) {
+            if (!el) return '';
+            try {
+                var db = el.getAttribute('data-bg');
+                if (db) return norm(db);
+                var st = el.getAttribute('style') || '';
+                var m = st.match(/url\\(["']?([^"')]+)["']?\\)/);
+                if (m) return norm(m[1]);
+            } catch(e) {}
+            return '';
+        }
 
-        // === 1. JSON-LD schema.org Movie — самый надёжный источник ===
+        var out = {
+            title: '', poster: '', description: '',
+            year: '', country: '', duration: '', genres: '',
+            quality: '', voices: '',
+            players: [], actors: [], related: []
+        };
+
+        // === JSON-LD ===
         var ld = null;
         try {
             var scripts = document.querySelectorAll('script[type="application/ld+json"]');
@@ -129,57 +148,61 @@ enum ExtractionScripts {
                 } else if (img.url) out.poster = norm(img.url);
             }
             if (ld.description) out.description = String(ld.description).trim().substring(0, 3000);
-
-            // Актёры из JSON-LD (только имена)
-            var ldActors = ld.actor;
-            if (ldActors) {
-                if (!Array.isArray(ldActors)) ldActors = [ldActors];
-                for (var a = 0; a < ldActors.length; a++) {
-                    var nm = ldActors[a] && ldActors[a].name;
-                    if (nm) out.actors.push({ name: String(nm).trim(), photo: '' });
+            if (ld.dateCreated) out.year = String(ld.dateCreated).trim();
+            if (ld.countryOfOrigin) {
+                var co = ld.countryOfOrigin;
+                if (!Array.isArray(co)) co = [co];
+                var countries = [];
+                for (var ci = 0; ci < co.length; ci++) {
+                    if (co[ci] && co[ci].name) countries.push(String(co[ci].name).trim());
+                }
+                out.country = countries.join(', ');
+            }
+            if (ld.genre) {
+                var g = ld.genre;
+                if (!Array.isArray(g)) g = [g];
+                out.genres = g.map(function(x){ return String(x).trim(); }).join(' / ');
+            }
+            if (ld.duration) {
+                var d = String(ld.duration);
+                var m = d.match(/PT(?:(\\d+)H)?(?:(\\d+)M)?/);
+                if (m) {
+                    var hh = m[1] ? parseInt(m[1]) : 0;
+                    var mm = m[2] ? parseInt(m[2]) : 0;
+                    if (hh > 0) out.duration = hh + ' ч ' + mm + ' мин';
+                    else out.duration = mm + ' мин';
                 }
             }
         }
 
-        // === 2. HTML fallback для title / poster / description ===
+        // === Fallback через HTML ===
         if (!out.title) {
-            var h1 = document.querySelector('h1');
+            var h1 = document.querySelector('h1.article__title, h1');
             if (h1) out.title = (h1.textContent || '').trim().replace(/\\s+/g, ' ');
-            if (!out.title && document.title) {
-                out.title = document.title.split('|')[0].split('—')[0].trim();
-            }
+        }
+        if (!out.poster) {
+            var pi = document.querySelector('.article__poster img, .movie__poster img, .poster img');
+            if (pi) out.poster = norm(pi.getAttribute('src') || pi.getAttribute('data-src') || '');
         }
 
-        if (!out.poster) {
-            var posterSelectors = [
-                '.movie__poster img', '.film-poster img', '.main_poster img',
-                '.poster img', '.sect-poster img', '[itemprop="image"]',
-                '.pmovie__poster img', '.movie-poster img'
-            ];
-            for (var ps = 0; ps < posterSelectors.length; ps++) {
-                var p = document.querySelector(posterSelectors[ps]);
-                if (p) {
-                    var url = norm(p.src || p.getAttribute('data-src') || p.getAttribute('data-original') || '');
-                    if (url && url.indexOf('data:') !== 0) {
-                        out.poster = url;
-                        break;
-                    }
+        // Инфо-поля из .article__info
+        function fieldByLabel(label) {
+            var items = document.querySelectorAll('.article__info > div, .ka4');
+            for (var i = 0; i < items.length; i++) {
+                var t = (items[i].textContent || '').trim();
+                if (t.indexOf(label) === 0 || t.indexOf(label) !== -1) {
+                    var parts = t.split(':');
+                    if (parts.length > 1) return parts.slice(1).join(':').trim();
                 }
             }
+            return '';
         }
-        if (!out.poster) {
-            var all = document.querySelectorAll('img');
-            for (var i = 0; i < all.length; i++) {
-                var im = all[i];
-                var w = im.naturalWidth || parseInt(im.getAttribute('width')) || 0;
-                var h = im.naturalHeight || parseInt(im.getAttribute('height')) || 0;
-                var src = norm(im.src || im.getAttribute('data-src') || '');
-                if (src && w > 150 && h > 200) {
-                    out.poster = src;
-                    break;
-                }
-            }
-        }
+        if (!out.year) out.year = fieldByLabel('Вышел в').substring(0, 4);
+        if (!out.country) out.country = fieldByLabel('Сняли в');
+        if (!out.duration) out.duration = fieldByLabel('Длительность');
+        if (!out.genres) out.genres = fieldByLabel('Жанры');
+        out.quality = fieldByLabel('Лучшее качество');
+        out.voices = fieldByLabel('Озвучки для вас');
 
         if (!out.description) {
             var at = document.querySelector('.article__text');
@@ -193,8 +216,9 @@ enum ExtractionScripts {
             }
         }
 
-        // === 3. Плееры ===
-        var PLAYER_HOSTS = ['cinemar', 'kodik', 'alloha', 'bazon', 'videocdn', 'sibnet', 'aniboom', 'hdvb', 'vadbam', 'pleer'];
+        // === Плееры ===
+        var PLAYER_HOSTS = ['cinemar', 'kodik', 'alloha', 'bazon', 'videocdn', 'sibnet',
+                            'aniboom', 'hdvb', 'vadbam', 'pleer', 'youtube', 'youtu.be'];
         function isPlayerUrl(u) {
             if (!u) return false;
             var low = u.toLowerCase();
@@ -203,75 +227,108 @@ enum ExtractionScripts {
             }
             return false;
         }
+
+        var seenP = {};
+
+        // 1. Плеер-табы (озвучки / плееры)
+        var tabs = document.querySelectorAll('.js-player-tabs li[data-src], .player-tabs li[data-src]');
+        for (var t = 0; t < tabs.length; t++) {
+            var tab = tabs[t];
+            var src = norm(tab.getAttribute('data-src') || '');
+            if (!src || !isPlayerUrl(src) || seenP[src]) continue;
+            seenP[src] = true;
+            var tabName = (tab.textContent || '').trim() || ('Плеер ' + (out.players.length + 1));
+            out.players.push({ name: tabName, url: src });
+        }
+
+        // 2. iframe
         var iframes = document.querySelectorAll('iframe');
-        var seen = {};
         for (var i = 0; i < iframes.length; i++) {
             var f = iframes[i];
             var src = norm(f.getAttribute('src') || '');
             if (!src) src = norm(f.getAttribute('data-src') || '');
-            if (!src || seen[src]) continue;
-            if (!isPlayerUrl(src)) continue;
-            seen[src] = true;
+            if (!src || seenP[src] || !isPlayerUrl(src)) continue;
+            seenP[src] = true;
             var name = (f.getAttribute('title') || '').trim() || ('Плеер ' + (out.players.length + 1));
             out.players.push({ name: name, url: src });
         }
 
-        // === 4. Обогащаем актёров фотографиями из HTML, если у них ещё нет photo ===
-        // Собираем карту: имя → url фото
-        var photoByName = {};
-        var containers = [
-            '.persons__section', '.persons__list', '.persons-list',
-            '.persons', '.actors', '[class*="persons"]', '[class*="actors"]'
-        ];
-        for (var ci = 0; ci < containers.length; ci++) {
-            var sect = document.querySelector(containers[ci]);
-            if (!sect) continue;
-            var imgs = sect.querySelectorAll('img');
-            for (var k = 0; k < imgs.length; k++) {
-                var img = imgs[k];
-                var photo = norm(img.src || img.getAttribute('data-src') || '');
-                if (!photo || photo.indexOf('data:') === 0) continue;
-                var nm = (img.alt || '').trim();
-                if (!nm) {
-                    var parent = img.closest('a') || img.parentElement;
-                    var hops = 0;
-                    while (parent && hops < 3 && !nm) {
-                        var c = parent.cloneNode(true);
-                        var cimg = c.querySelector('img');
-                        if (cimg) cimg.remove();
-                        var t = (c.textContent || '').trim().replace(/\\s+/g, ' ');
-                        if (t && t.length < 80) nm = t;
-                        parent = parent.parentElement;
-                        hops++;
-                    }
-                }
-                if (nm && !photoByName[nm]) photoByName[nm] = photo;
+        // 3. Трейлер
+        var trailerBtn = document.querySelector('.js-player-trailer');
+        if (trailerBtn) {
+            var tSrc = norm(trailerBtn.getAttribute('data-src') || '');
+            if (tSrc && !seenP[tSrc] && isPlayerUrl(tSrc)) {
+                seenP[tSrc] = true;
+                out.players.push({ name: 'Трейлер', url: tSrc });
             }
         }
 
-        // Подставляем фото к актёрам из JSON-LD
-        for (var ai = 0; ai < out.actors.length; ai++) {
-            if (out.actors[ai].photo) continue;
-            var aName = out.actors[ai].name;
-            if (photoByName[aName]) {
-                out.actors[ai].photo = photoByName[aName];
-            } else {
-                // Поиск по частичному совпадению имени
-                for (var key in photoByName) {
-                    if (key.indexOf(aName) !== -1 || aName.indexOf(key) !== -1) {
-                        out.actors[ai].photo = photoByName[key];
-                        break;
-                    }
+        // === Актёры (persons__section) ===
+        var seenA = {};
+        var sections = document.querySelectorAll('.persons__section');
+        for (var si = 0; si < sections.length; si++) {
+            var section = sections[si];
+            var items = section.querySelectorAll('a.js-person, a.persons__item');
+            for (var ai = 0; ai < items.length; ai++) {
+                var a = items[ai];
+                var aHref = norm(a.href || '');
+                var name = (a.getAttribute('title') || '').trim();
+                if (!name) {
+                    var cclone = a.cloneNode(true);
+                    var fdiv = cclone.querySelector('.persons__foto');
+                    if (fdiv) fdiv.remove();
+                    name = (cclone.textContent || '').trim().replace(/\\s+/g, ' ');
                 }
+                if (!name || name.length > 100) continue;
+
+                var photo = '';
+                var fotoEl = a.querySelector('.persons__foto');
+                if (fotoEl) {
+                    photo = bgUrl(fotoEl);
+                    if (photo.indexOf('no_actors') !== -1 || photo.indexOf('dot.gif') !== -1) photo = '';
+                }
+
+                if (seenA[name]) continue;
+                seenA[name] = true;
+                out.actors.push({ name: name, photo: photo, url: aHref });
             }
         }
 
-        // Если JSON-LD не дал актёров — берём их из HTML напрямую
-        if (out.actors.length === 0) {
-            for (var key2 in photoByName) {
-                out.actors.push({ name: key2, photo: photoByName[key2] });
-                if (out.actors.length >= 30) break;
+        // === Рекомендации к просмотру ===
+        var seenR = {};
+        var relEls = document.querySelectorAll('.relatednews__content a.relatednews__item, a.relatednews__item');
+        for (var ri = 0; ri < relEls.length; ri++) {
+            var rel = relEls[ri];
+            var rHref = norm(rel.href || '');
+            if (!rHref || seenR[rHref]) continue;
+            seenR[rHref] = true;
+
+            var rImg = rel.querySelector('img.relatednews__image, img');
+            var rPoster = '';
+            if (rImg) {
+                rPoster = norm(rImg.getAttribute('data-src') || rImg.getAttribute('src') || '');
+                if (rPoster.indexOf('dot.gif') !== -1) rPoster = '';
             }
+
+            var rTitle = (rel.getAttribute('title') || '').trim();
+            if (!rTitle && rImg) rTitle = (rImg.alt || '').trim();
+            if (!rTitle) {
+                var rClone = rel.cloneNode(true);
+                var rcImg = rClone.querySelector('img');
+                if (rcImg) rcImg.remove();
+                rTitle = (rClone.textContent || '').trim().replace(/\\s+/g, ' ');
+            }
+            if (!rTitle || rTitle.length > 200) continue;
+
+            var rm = rTitle.match(/\\((\\d{4})\\)/);
+            out.related.push({
+                title: rTitle,
+                url: rHref,
+                poster: rPoster,
+                year: rm ? rm[1] : '',
+                rating: ''
+            });
+            if (out.related.length >= 20) break;
         }
 
         return JSON.stringify(out);
