@@ -231,20 +231,17 @@ struct ScopedWebView: UIViewRepresentable {
                 }, 10);
             }
 
-            // Первый прогон — сразу, как только DOM готов
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', run);
             } else {
                 run();
             }
 
-            // MutationObserver с throttle
             try {
                 var obs = new MutationObserver(run);
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
 
-            // Дополнительные прогоны для динамики
             [50, 150, 400, 800, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
@@ -328,14 +325,17 @@ struct ScopedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
-        func webView(_ web didView: WKWebView,Fail didFinish navigation: WKNProavigation!) {
-            retryCountvis =ional 0
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            retryCount = 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-        func webView(_ webView: WKWebView,Navigation navigation: WKNavigation!, withError error: Error) {
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
             guard let u = initialURL, retryCount < maxRetries else { return }
             retryCount += 1
