@@ -60,7 +60,6 @@ struct MovieDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
 
                     header
-
                     metaLine
 
                     if vm.selectedPlayer != nil {
@@ -81,7 +80,7 @@ struct MovieDetailView: View {
                         .buttonStyle(.plain)
                     }
 
-                    if let d = vm.detail, d.voices.isEmpty == false {
+                    if let d = vm.detail, !d.voices.isEmpty {
                         infoRow(title: "Озвучки", value: d.voices)
                     }
 
@@ -196,7 +195,9 @@ struct MovieDetailView: View {
                     if a.url.isEmpty {
                         actorCard(a)
                     } else {
-                        NavigationLink(value: a) {
+                        NavigationLink {
+                            ActorView(actor: a)
+                        } label: {
                             actorCard(a)
                         }
                         .buttonStyle(.plain)
@@ -222,7 +223,9 @@ struct MovieDetailView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: 12) {
                 ForEach(movies) { m in
-                    NavigationLink(value: m) {
+                    NavigationLink {
+                        MovieDetailView(movie: m)
+                    } label: {
                         VStack(alignment: .leading, spacing: 6) {
                             if m.poster.isEmpty {
                                 ZStack {
