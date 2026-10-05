@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v12",
+            forIdentifier: "ScopedBlock_v13",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -54,6 +54,10 @@ struct ScopedWebView: UIViewRepresentable {
                     iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
                     iframe[src*="agl010"], iframe[src*="cvt-s1"],
                     [id^="adangle-"], [id^="br5g"], [id^="eas-"],
+                    .ad-branding, ins.ad-branding, ins[data-key],
+                    .rocketme_brand_block, .rocketme_brand_block_brand,
+                    .rocketme_brand_site_container, .rocketme_brand_image,
+                    a[href*="kinogo.luxury"], a[href*="luxury"],
                     img[src*="pinco"], img[src*="kysh"], img[src*="promocode"],
                     img[src*="agl010"], img[src*="b5c1d2e8"],
                     [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
@@ -164,7 +168,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
+                     forNavigationAction navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 if isMovieURL(url) { onMovieTap?(url) }
@@ -192,7 +196,7 @@ struct ScopedWebView: UIViewRepresentable {
             retryCount += 1
             let delay = Double(retryCount) * 1.5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.load(URLRequest(url: u))
+                webView.load(URLRequest(url: url))
             }
         }
     }
