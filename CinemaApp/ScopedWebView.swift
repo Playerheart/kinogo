@@ -17,6 +17,8 @@ struct ScopedWebView: UIViewRepresentable {
         let blockRules = """
         [
             {"trigger": {"url-filter": ".*", "if-domain": ["*b5c1d2e8c9982e3b965a27ac72ru7284cc.com"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*agl010.pro"]}, "action": {"type": "block"}},
+            {"trigger": {"url-filter": ".*", "if-domain": ["*cvt-s1.agl010.pro"]}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*pinco.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*kysh.*"}, "action": {"type": "block"}},
             {"trigger": {"url-filter": ".*promocode.*"}, "action": {"type": "block"}},
@@ -27,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v4",
+            forIdentifier: "ScopedBlock_v5",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -36,6 +38,7 @@ struct ScopedWebView: UIViewRepresentable {
         let js = """
         (function() {
             var HIDE_ID = '__scoped_hide__';
+
             function ensureStyle() {
                 if (document.getElementById(HIDE_ID)) return;
                 var style = document.createElement('style');
@@ -47,6 +50,9 @@ struct ScopedWebView: UIViewRepresentable {
                     .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
                     .yellow-banner, [class*="yellow-banner"],
                     [class*="pinco" i], [class*="kysh" i],
+                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
+                    .xfilter__groups, .xsort__selected,
+                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
                     [data-adblock-hidden="1"] {
                         display: none !important;
                         visibility: hidden !important;
@@ -81,6 +87,13 @@ struct ScopedWebView: UIViewRepresentable {
                 return el.querySelector('video, iframe[src*="cinemar"], iframe[src*="kodik"], iframe[src*="alloha"]') !== null;
             }
 
+            function isPopup(el) {
+                if (!el || !el.classList) return false;
+                return el.classList.contains('js-person-popup') ||
+                       el.classList.contains('person__popup') ||
+                       el.classList.contains('person__profile');
+            }
+
             function hideByText() {
                 var candidates = document.querySelectorAll('div, section, aside, ins, span');
                 for (var i = candidates.length - 1; i >= 0; i--) {
@@ -88,6 +101,7 @@ struct ScopedWebView: UIViewRepresentable {
                     if (el.getAttribute('data-adblock-hidden')) continue;
                     if (el.style && el.style.display === 'none') continue;
                     if (containsPlayer(el)) continue;
+                    if (isPopup(el)) continue;
                     var text = (el.textContent || '').toLowerCase();
                     if (text.length < 5 || text.length > 800) continue;
                     for (var j = 0; j < BAD_TEXTS.length; j++) {
@@ -131,6 +145,14 @@ struct ScopedWebView: UIViewRepresentable {
                 }
             }
 
+            // Пометка актёров, чтобы случайно не скрыть попап
+            function markPersons() {
+                var persons = document.querySelectorAll('a.js-person');
+                for (var i = 0; i < persons.length; i++) {
+                    persons[i].setAttribute('data-person-bound', '1');
+                }
+            }
+
             var pending = false;
             function run() {
                 if (pending) return;
@@ -140,6 +162,7 @@ struct ScopedWebView: UIViewRepresentable {
                     ensureStyle();
                     hideByText();
                     hideByImage();
+                    markPersons();
                 }, 250);
             }
             run();
@@ -237,7 +260,6 @@ struct ScopedWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
-            // Авторетрай: первый запуск может упасть пока пользователь разрешает сеть
             guard let u = initialURL, retryCount < maxRetries else { return }
             retryCount += 1
             let delay = Double(retryCount) * 1.5
