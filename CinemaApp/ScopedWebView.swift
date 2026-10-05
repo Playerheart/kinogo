@@ -29,7 +29,7 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v6",
+            forIdentifier: "ScopedBlock_v7",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -87,11 +87,18 @@ struct ScopedWebView: UIViewRepresentable {
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
                 'скачай официальное мобильное', 'скачай мобильное приложение',
                 'подпишись на kinogo', 'будь в курсе актуальных',
-                'без рекламы? вступай', 'без рекламы',
+                'без рекламы? вступай',
                 'всегда доступен', 'бесплатно и без рекламы',
                 'будь избранным', 'перейти на kinogo', 'kinogo.luxury',
                 'создай свой киного', 'на случай блока',
                 'рекомендации к просмотру'
+            ];
+
+            // Классы-контейнеры, которые НЕЛЬЗЯ скрывать целиком
+            var PROTECTED_CLASSES = [
+                'content', 'main', 'article', 'box', 'dle-content',
+                'wrapper', 'container', 'page', 'poster', 'persons',
+                'player', 'movie', 'article__body', 'article__text'
             ];
 
             var BAD_CLASSES = [
@@ -112,6 +119,15 @@ struct ScopedWebView: UIViewRepresentable {
                        el.classList.contains('person__profile');
             }
 
+            function isProtected(el) {
+                if (!el || !el.classList) return false;
+                var cls = (el.className || '').toString().toLowerCase();
+                for (var i = 0; i < PROTECTED_CLASSES.length; i++) {
+                    if (cls.indexOf(PROTECTED_CLASSES[i]) !== -1) return true;
+                }
+                return false;
+            }
+
             function hasBadClass(el) {
                 if (!el || !el.classList) return false;
                 var cls = (el.className || '').toString().toLowerCase();
@@ -129,17 +145,20 @@ struct ScopedWebView: UIViewRepresentable {
                     if (el.style && el.style.display === 'none') continue;
                     if (containsPlayer(el)) continue;
                     if (isPopup(el)) continue;
+                    if (isProtected(el)) continue;
+
+                    // Не скрываем большие контейнеры: высота < 300, текст < 250 символов
+                    var r = el.getBoundingClientRect();
+                    if (r.height > 300 || r.height < 20) continue;
+                    if (r.width < 100) continue;
 
                     var text = (el.textContent || '').toLowerCase();
-                    if (text.length < 5 || text.length > 1200) continue;
+                    if (text.length < 5 || text.length > 250) continue;
 
                     for (var j = 0; j < BAD_TEXTS.length; j++) {
                         if (text.indexOf(BAD_TEXTS[j].toLowerCase()) !== -1) {
-                            var r = el.getBoundingClientRect();
-                            if (r.height > 20 && r.height < 900 && r.width > 80) {
-                                el.style.setProperty('display', 'none', 'important');
-                                el.setAttribute('data-adblock-hidden', '1');
-                            }
+                            el.style.setProperty('display', 'none', 'important');
+                            el.setAttribute('data-adblock-hidden', '1');
                             break;
                         }
                     }
@@ -153,6 +172,7 @@ struct ScopedWebView: UIViewRepresentable {
                     if (el.getAttribute('data-adblock-hidden')) continue;
                     if (containsPlayer(el)) continue;
                     if (isPopup(el)) continue;
+                    if (isProtected(el)) continue;
                     if (hasBadClass(el)) {
                         el.style.setProperty('display', 'none', 'important');
                         el.setAttribute('data-adblock-hidden', '1');
@@ -176,6 +196,7 @@ struct ScopedWebView: UIViewRepresentable {
                     var depth = 0;
                     while (p && depth < 5) {
                         if (p.getAttribute('data-adblock-hidden')) break;
+                        if (isProtected(p)) break;
                         if (p.tagName === 'A' && p.href && p.href.indexOf('.html') !== -1) break;
                         var pr = p.getBoundingClientRect();
                         if (pr.height > 40 && pr.height < 500 && pr.width > 150) {
