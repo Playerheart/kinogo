@@ -6,6 +6,10 @@ struct PlayerScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = true
 
+    @State private var voices: [String] = []
+    @State private var showVoicePicker = false
+    @State private var pendingVoice: String? = nil
+
     @State private var capturedVideoURL: URL?
     @State private var showCaptureAlert = false
 
@@ -30,7 +34,11 @@ struct PlayerScreen: View {
                         onVideoURLTap: { videoURL in
                             capturedVideoURL = videoURL
                             showCaptureAlert = true
-                        }
+                        },
+                        onVoicesDetected: { list in
+                            voices = list
+                        },
+                        voiceToSelect: $pendingVoice
                     )
                     .edgesIgnoringSafeArea(.bottom)
                 }
@@ -59,6 +67,13 @@ struct PlayerScreen: View {
                     Button("Закрыть") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    if !voices.isEmpty {
+                        Button {
+                            showVoicePicker = true
+                        } label: {
+                            Image(systemName: "waveform")
+                        }
+                    }
                     Button {
                         showManualURLInput = true
                     } label: {
@@ -76,6 +91,14 @@ struct PlayerScreen: View {
                     }
                 }
             }
+            .confirmationDialog("Выберите озвучку", isPresented: $showVoicePicker, titleVisibility: .visible) {
+                ForEach(voices, id: \.self) { v in
+                    Button(v) {
+                        pendingVoice = v
+                    }
+                }
+                Button("Отмена", role: .cancel) {}
+            }
             .alert("Ссылка на видео", isPresented: $showCaptureAlert, presenting: capturedVideoURL) { url in
                 Button("Играть в нативном плеере") {
                     nativePlayerURL = url
@@ -88,18 +111,12 @@ struct PlayerScreen: View {
             } message: { url in
                 Text(url.absoluteString)
             }
-            .sheet(isPresented: $showNativePlayer) {
+            .fullScreenCover(isPresented: $showNativePlayer) {
                 if let url = nativePlayerURL {
-                    NavigationStack {
+                    ZStack(alignment: .topTrailing) {
+                        Color.black.ignoresSafeArea()
                         NativePlayerView(url: url)
                             .ignoresSafeArea()
-                            .navigationTitle("Плеер")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Готово") { showNativePlayer = false }
-                                }
-                            }
                     }
                 }
             }
@@ -119,7 +136,7 @@ struct PlayerScreen: View {
                     }
                     manualURLText = ""
                 }
-                Button("Отмена", role: .cancel) { manualURLText = "" }
+                Button("Отмена",(at role: .cancel) { manualURLText = "" }
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
             }
@@ -136,7 +153,7 @@ struct PlayerScreen: View {
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             let name = url.lastPathComponent.isEmpty ? "video.mp4" : url.lastPathComponent
             let dest = docs.appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: dest)
+            try? FileManager.default.removeItem: dest)
             try? FileManager.default.moveItem(at: localURL, to: dest)
             DispatchQueue.main.async {
                 downloadedFile = dest
@@ -154,6 +171,8 @@ struct RawPlayerWebView: UIViewRepresentable {
     let url: URL
     @Binding var isLoading: Bool
     var onVideoURLTap: ((URL) -> Void)? = nil
+    var onVoicesDetected: (([String]) -> Void)? = nil
+    @Binding var voiceToSelect: String?
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -163,37 +182,27 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        // Перехватчик fetch/XHR + автокликер внутри iframe cinemar
         let hunterJS = """
         (function() {
-            if (window.__videoHunterInstalled) return;
+            var isCinemar = (location.hostname || '').indexOf('cinemar') !== -1;
+            if (!isCinemar || window.__videoHunterInstalled) return;
             window.__videoHunterInstalled = true;
 
             function reportVideo(url) {
                 if (!url) return;
                 var low = url.toLowerCase();
-                if (low.indexOf('.mp4') === -1 &&
-                    low.indexOf('.m3u8') === -1 &&
-                    low.indexOf('.mkv') === -1 &&
-                    low.indexOf('.webm') === -1) return;
-                try {
-                    window.webkit.messageHandlers.videoURL.postMessage(url);
-                } catch(e) {}
+                if (low.indexOf('.mp4') === -1 && low.indexOf('.m3u8') === -1 &&
+                    low.indexOf('.mkv') === -1 && low.indexOf('.webm') === -1) return;
+                try { window.webkit.messageHandlers.videoURL.postMessage(url); } catch(e) {}
             }
 
-            // 1) fetch
             try {
                 var _fetch = window.fetch;
                 window.fetch = function(input, init) {
-                    try {
-                        var u = (typeof input === 'string') ? input : (input && input.url);
-                        if (u) reportVideo(u);
-                    } catch(e) {}
+                    try { var u = (typeof input === 'string') ? input : (input && input.url); if (u) reportVideo(u); } catch(e) {}
                     return _fetch.apply(this, arguments);
                 };
             } catch(e) {}
-
-            // 2) XHR
             try {
                 var _open = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, u) {
@@ -201,39 +210,60 @@ struct RawPlayerWebView: UIViewRepresentable {
                     return _open.apply(this, arguments);
                 };
             } catch(e) {}
-
-            // 3) клик по <a download>
             try {
                 var _click = HTMLAnchorElement.prototype.click;
                 HTMLAnchorElement.prototype.click = function() {
-                    try {
-                        var h = this.href || '';
-                        if (h) reportVideo(h);
-                    } catch(e) {}
+                    try { var h = this.href || ''; if (h) reportVideo(h); } catch(e) {}
                     return _click.apply(this, arguments);
                 };
             } catch(e) {}
 
-            // 4) Автокликер — только внутри iframe cinemar.cc
-            function autoClickDownload() {
-                var isCinemar = (location.hostname || '').indexOf('cinemar') !== -1;
-                if (!isCinemar) return;
-                if (window.__dlClicked) return;
-                window.__dlClicked = true;
+            function sendVoices() {
                 try {
-                    var btn = document.getElementById('player_control_pl-download');
-                    if (btn) {
-                        btn.click();
-                        try {
-                            btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                        } catch(e) {}
+                    var btns = document.querySelectorAll('.playlist-dropdown button');
+                    var arr = [];
+                    for (var i = 0; i < btns.length; i++) {
+                        var t = (btns[i].textContent || '').trim();
+                        if (t && arr.indexOf(t) === -1) arr.push(t);
+                    }
+                    if (arr.length > 0) {
+                        window.webkit.messageHandlers.voiceList.postMessage(arr);
                     }
                 } catch(e) {}
             }
+            setTimeout(sendVoices, 2000);
+            setTimeout(sendVoices, 5000);
+            setTimeout(sendVoices, 9000);
 
-            function autoClick720() {
-                var isCinemar = (location.hostname || '').indexOf('cinemar') !== -1;
-                if (!isCinemar) return;
+            window.addEventListener('message', function(e) {
+                if (!e.data || e.data.type !== 'selectVoice') return;
+                var text = e.data.text;
+                try {
+                    var title = document.querySelector('.playlist-title');
+                    if (title) title.click();
+                    setTimeout(function() {
+                        var all = document.querySelectorAll('.playlist-dropdown button');
+                        for (var i = 0; i < all.length; i++) {
+                            if ((all[i].textContent || '').trim() === text) {
+                                all[i].click();
+                                return;
+                            }
+                        }
+                    }, 250);
+                } catch(e) {}
+            });
+
+            setTimeout(function() {
+                if (window.__dlClicked) return;
+                window.__dlClicked = true;
+                var btn = document.getElementById('player_control_pl-download');
+                if (btn) {
+                    btn.click();
+                    try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                }
+            }, 3000);
+
+            setTimeout(function() {
                 if (window.__q720Clicked) return;
                 var all = document.querySelectorAll('button, div, span, li, a');
                 for (var i = 0; i < all.length; i++) {
@@ -243,27 +273,18 @@ struct RawPlayerWebView: UIViewRepresentable {
                     if (t === '720p' || t === '720' || t.indexOf('720p') === 0) {
                         window.__q720Clicked = true;
                         try { el.click(); } catch(e) {}
-                        try {
-                            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                        } catch(e) {}
+                        try { el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
                         return;
                     }
                 }
-            }
-
-            setTimeout(autoClickDownload, 3000);
-            setTimeout(autoClick720, 5000);
+            }, 5000);
         })();
         """
-        let hunterScript = WKUserScript(
-            source: hunterJS,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: false
-        )
+        let hunterScript = WKUserScript(source: hunterJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         config.userContentController.addUserScript(hunterScript)
 
-        // Регистрируем message handler
         config.userContentController.add(context.coordinator, name: "videoURL")
+        config.userContentController.add(context.coordinator, name: "voiceList")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -274,12 +295,39 @@ struct RawPlayerWebView: UIViewRepresentable {
         webView.scrollView.backgroundColor = .black
 
         context.coordinator.onVideoURLTap = onVideoURLTap
+        context.coordinator.onVoicesDetected = onVoicesDetected
         context.coordinator.webView = webView
         context.coordinator.load(url: url)
         return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        guard let voice = voiceToSelect, !voice.isEmpty else { return }
+        let escaped = voice
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        let js = """
+        (function retrySelect(count){
+            var iframes = document.querySelectorAll('iframe');
+            var sent = false;
+            for (var i = 0; i < iframes.length; i++) {
+                try {
+                    if (iframes[i].contentWindow) {
+                        iframes[i].contentWindow.postMessage({type:'selectVoice', text:'\(escaped)'}, '*');
+                        sent = true;
+                    }
+                } catch(e) {}
+            }
+            if (!sent && count < 10) {
+                setTimeout(function(){ retrySelect(count+1); }, 300);
+            }
+        })(0);
+        """
+        uiView.evaluateJavaScript(js, completionHandler: nil)
+        DispatchQueue.main.async {
+            voiceToSelect = nil
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(isLoading: $isLoading)
@@ -289,6 +337,7 @@ struct RawPlayerWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         let isLoading: Binding<Bool>
         var onVideoURLTap: ((URL) -> Void)?
+        var onVoicesDetected: (([String]) -> Void)?
         private var observer: NSObjectProtocol?
 
         init(isLoading: Binding<Bool>) {
@@ -314,16 +363,14 @@ struct RawPlayerWebView: UIViewRepresentable {
             webView.load(request)
         }
 
-        // Приём URL из JS
         func userContentController(_ userContentController: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
-            guard message.name == "videoURL" else { return }
-            guard let str = message.body as? String, let url = URL(string: str) else { return }
-            let low = str.lowercased()
-            guard low.contains(".mp4") || low.contains(".m3u8") ||
-                  low.contains(".mkv") || low.contains(".webm") else { return }
-            DispatchQueue.main.async {
-                self.onVideoURLTap?(url)
+            if message.name == "videoURL" {
+                guard let str = message.body as? String, let url = URL(string: str) else { return }
+                DispatchQueue.main.async { self.onVideoURLTap?(url) }
+            } else if message.name == "voiceList" {
+                guard let arr = message.body as? [String] else { return }
+                DispatchQueue.main.async { self.onVoicesDetected?(arr) }
             }
         }
 
