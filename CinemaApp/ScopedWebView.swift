@@ -14,7 +14,6 @@ struct ScopedWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        // Сеть: блокируем рекламные домены
         let blockRules = """
         [
             {"trigger": {"url-filter": ".*", "if-domain": ["*b5c1d2e8c9982e3b965a27ac72ru7284cc.com"]}, "action": {"type": "block"}},
@@ -30,86 +29,65 @@ struct ScopedWebView: UIViewRepresentable {
         ]
         """
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v8",
+            forIdentifier: "ScopedBlock_v9",
             encodedContentRuleList: blockRules
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
         }
 
-        // CSS-инъекция ДО парсинга HTML — элементы рекламы не успевают появиться
-        let cssEarly = """
-        (function() {
-            var style = document.createElement('style');
-            style.id = '__scoped_early__';
-            style.innerHTML = `
-                header, footer, .header, .footer, .nav, .top-menu, .main-menu,
-                .sidebar, .left-side, .right-side, aside,
-                #header, #footer, #nav, #sidebar,
-                .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
-                .yellow-banner, [class*="yellow-banner"],
-                [class*="pinco" i], [class*="kysh" i],
-                .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
-                .xfilter__groups, .xsort__selected,
-                iframe[src*="agl010"], iframe[src*="cvt-s1"],
-                iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
-                #adangle-a6dd61a3-f1e1-4f68-993a-d6d4e9f87fff-click,
-                [id^="adangle-"], [id^="br5g"], [id^="eas-"],
-                [class*="ad-branding"], [class*="adangle"],
-                a.moved-tg, .moved, .moved2,
-                .app-download, .app-download.full-b,
-                .branded, .promo, .luxury-banner,
-                .rocketme_brand_site_container, .rocketme_brand_image,
-                .rocketme_brand_block_brand, .rocketme_brand_block,
-                .video-block-strip,
-                .regtg__text, .regtg__telegram, .regtg,
-                .usermark__panel, .js-usermark,
-                .franchise,
-                [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
-                [data-adblock-hidden="1"] {
-                    display: none !important;
-                    visibility: hidden !important;
-                    height: 0 !important;
-                    min-height: 0 !important;
-                    max-height: 0 !important;
-                    margin: 0 !important;
-                    padding: 0 !important;
-                    border: 0 !important;
-                }
-                html, body {
-                    background: #000 !important; color: #fff !important;
-                    padding: 0 !important; margin: 0 !important;
-                    max-width: 100% !important; overflow-x: hidden !important;
-                }
-                body * { max-width: 100% !important; }
-                .content, .main, .page, .wrapper, .container,
-                #content, #main, .content-wrapper, .main-content {
-                    padding: 6px !important; margin: 0 !important;
-                    max-width: 100% !important; width: 100% !important;
-                    background: transparent !important; box-sizing: border-box !important;
-                }
-            `;
-            // Вставляем как можно раньше
-            if (document.head) {
-                document.head.appendChild(style);
-            } else if (document.documentElement) {
-                document.documentElement.appendChild(style);
-            } else {
-                document.addEventListener('DOMContentLoaded', function() {
-                    document.head.appendChild(style);
-                });
-            }
-        })();
-        """
-        let earlyScript = WKUserScript(
-            source: cssEarly,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
-        )
-        config.userContentController.addUserScript(earlyScript)
-
-        // JS для динамических элементов (то, что появляется позже)
         let js = """
         (function() {
+            var HIDE_ID = '__scoped_hide__';
+
+            function ensureStyle() {
+                if (document.getElementById(HIDE_ID)) return;
+                if (!document.head) return;
+                var style = document.createElement('style');
+                style.id = HIDE_ID;
+                style.innerHTML = `
+                    header, footer, .header, .footer, .nav, .top-menu, .main-menu,
+                    .sidebar, .left-side, .right-side, aside,
+                    #header, #footer, #nav, #sidebar,
+                    .comments, #comments, .social, .share, .breadcrumbs, .breadcrumb,
+                    .yellow-banner, [class*="yellow-banner"],
+                    [class*="pinco"], [class*="kysh"],
+                    .xsort, .xsort--main, .js-xf-groups, .js-xf-selected,
+                    .xfilter__groups, .xsort__selected,
+                    iframe[src*="agl010"], iframe[src*="cvt-s1"],
+                    iframe[id^="adangle-"], iframe[id^="br5g"], iframe[id^="eas-"],
+                    [id^="adangle-"], [id^="br5g"], [id^="eas-"],
+                    [class*="ad-branding"], [class*="adangle"],
+                    a.moved-tg, .moved, .moved2,
+                    .app-download, .app-download.full-b,
+                    .branded, .promo, .luxury-banner,
+                    .rocketme_brand_site_container, .rocketme_brand_image,
+                    .rocketme_brand_block_brand, .rocketme_brand_block,
+                    .video-block-strip,
+                    .usermark__panel,
+                    [data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],
+                    [data-adblock-hidden="1"] {
+                        display: none !important;
+                        visibility: hidden !important;
+                        height: 0 !important;
+                        min-height: 0 !important;
+                        max-height: 0 !important;
+                    }
+                    html, body {
+                        background: #000 !important; color: #fff !important;
+                        padding: 0 !important; margin: 0 !important;
+                        max-width: 100% !important; overflow-x: hidden !important;
+                    }
+                    body * { max-width: 100% !important; }
+                    .content, .main, .page, .wrapper, .container,
+                    #content, #main, .content-wrapper, .main-content {
+                        padding: 6px !important; margin: 0 !important;
+                        max-width: 100% !important; width: 100% !important;
+                        background: transparent !important; box-sizing: border-box !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
             var BAD_TEXTS = [
                 'pinco', 'promocode', 'bahis yap',
                 'алғашқы бәс', 'жениске жет', 'осында жениске',
@@ -118,7 +96,7 @@ struct ScopedWebView: UIViewRepresentable {
                 'без рекламы? вступай',
                 'всегда доступен', 'бесплатно и без рекламы',
                 'будь избранным', 'перейти на kinogo', 'kinogo.luxury',
-                'создай свой киного', 'на случай блока',
+                'создай свой киного, на случай блока',
                 'рекомендации к просмотру'
             ];
 
@@ -131,8 +109,7 @@ struct ScopedWebView: UIViewRepresentable {
             var BAD_CLASSES = [
                 'branded', 'rocketme_brand', 'app-download', 'moved', 'moved2',
                 'yellow-banner', 'promo', 'luxury-banner', 'ad-branding',
-                'video-block-strip', 'usermark__panel',
-                'regtg__telegram', 'regtg__text'
+                'video-block-strip', 'usermark__panel'
             ];
 
             function containsPlayer(el) {
@@ -221,8 +198,7 @@ struct ScopedWebView: UIViewRepresentable {
                     var src = (img.src || img.getAttribute('data-src') || '').toLowerCase();
                     var isAd = src.indexOf('pinco') !== -1 || src.indexOf('kysh') !== -1 ||
                                src.indexOf('promocode') !== -1 || src.indexOf('bahis') !== -1 ||
-                               src.indexOf('b5c1d2e8') !== -1 || src.indexOf('agl010') !== -1 ||
-                               (img.complete && img.naturalWidth === 0 && src.indexOf('poster') === -1 && src.indexOf('persons') === -1 && src.indexOf('actor') === -1);
+                               src.indexOf('b5c1d2e8') !== -1 || src.indexOf('agl010') !== -1;
                     if (!isAd) continue;
                     img.style.setProperty('display', 'none', 'important');
                     var p = img.parentElement;
@@ -248,16 +224,27 @@ struct ScopedWebView: UIViewRepresentable {
                 pending = true;
                 setTimeout(function() {
                     pending = false;
-                    hideByText();
-                    hideByClass();
-                    hideByImage();
-                }, 50);
+                    try { ensureStyle(); } catch(e) {}
+                    try { hideByText(); } catch(e) {}
+                    try { hideByClass(); } catch(e) {}
+                    try { hideByImage(); } catch(e) {}
+                }, 10);
             }
-            run();
+
+            // Первый прогон — сразу, как только DOM готов
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', run);
+            } else {
+                run();
+            }
+
+            // MutationObserver с throttle
             try {
                 var obs = new MutationObserver(run);
                 obs.observe(document.documentElement, { childList: true, subtree: true });
             } catch(e) {}
+
+            // Дополнительные прогоны для динамики
             [50, 150, 400, 800, 1500, 3000, 6000, 12000].forEach(function(d){ setTimeout(run, d); });
         })();
         """
@@ -341,14 +328,14 @@ struct ScopedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            retryCount = 0
+        func webView(_ web didView: WKWebView,Fail didFinish navigation: WKNProavigation!) {
+            retryCountvis =ional 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        func webView(_ webView: WKWebView,Navigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
             guard let u = initialURL, retryCount < maxRetries else { return }
             retryCount += 1
