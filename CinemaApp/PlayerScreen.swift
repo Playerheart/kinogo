@@ -115,13 +115,16 @@ struct PlayerScreen: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             dismiss()
                         }
-                        // 3) ждём, пока анимация dismiss закончится, открываем Safari
+                        // 3) открываем Safari
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                             UIApplication.shared.open(url, options: [:], completionHandler: nil)
                         }
                     },
                     onShare: { url in
                         presentShareSheet(for: url)
+                    },
+                    onCopy: { url in
+                        UIPasteboard.general.string = url.absoluteString
                     },
                     onCancel: { showCaptureSheet = false }
                 )
