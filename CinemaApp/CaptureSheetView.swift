@@ -42,12 +42,12 @@ struct CaptureSheetView: View {
                         Button {
                             onPlay(url)
                         } label: {
-                            Label("Играть в нативном плеере", systemImage: "play.fill")
+                            Label("Открыть видео в Safari", systemImage: "safari")
                         }
                         Button {
                             onDownload(url)
                         } label: {
-                            Label("Скачать файл", systemImage: "arrow.down.circle")
+                            Label("Скачать в Safari", systemImage: "arrow.down.circle")
                         }
                     }
                 }
