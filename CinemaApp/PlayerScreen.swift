@@ -268,13 +268,13 @@ struct PlayerScreen: View {
         let lock = NSLock()
         let group = DispatchGroup()
 
-        let tests: [(String, URL)] = [
-            ("google.com",        URL(string: "https://www.google.com/")!),
-            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!),
-            ("host.cinemap.cc",   url)
+        let tests: [(String, URL, Bool)] = [
+            ("google.com",        URL(string: "https://www.google.com/")!, false),
+            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!, false),
+            ("host.cinemap.cc",   url, true)
         ]
 
-        for (name, testURL) in tests {
+        for (name, testURL, showBody) in tests {
             group.enter()
             var req = URLRequest(url: testURL,
                                  cachePolicy: .reloadIgnoringLocalCacheData,
@@ -287,7 +287,15 @@ struct PlayerScreen: View {
                 if let err = error as NSError? {
                     line = "\(name)  ❌  \(elapsed)с\n   \(err.domain)#\(err.code)\n   \(err.localizedDescription)"
                 } else if let http = response as? HTTPURLResponse {
-                    line = "\(name)  ✅  \(elapsed)с  HTTP \(http.statusCode)  \(data?.count ?? 0) б"
+                    let mime = http.mimeType ?? "?"
+                    let len = data?.count ?? 0
+                    var block = "\(name)  ✅  \(elapsed)с\n   HTTP \(http.statusCode)  \(len) б  \(mime)"
+                    if showBody, let d = data {
+                        let preview = String(data: d.prefix(400), encoding: .utf8)
+                            ?? "<бинарные данные>"
+                        block += "\n\n   ПЕРВЫЕ 400 СИМВОЛОВ:\n\(preview)"
+                    }
+                    line = block
                 } else {
                     line = "\(name)  ?  \(elapsed)с  нет ответа"
                 }
@@ -296,7 +304,7 @@ struct PlayerScreen: View {
                 let snapshot = results.sorted().joined(separator: "\n\n")
                 lock.unlock()
                 DispatchQueue.main.async {
-                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)\n\n(тик: \(self.debugTick))"
+                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)"
                 }
                 group.leave()
             }.resume()
