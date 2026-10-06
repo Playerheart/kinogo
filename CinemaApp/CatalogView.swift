@@ -64,8 +64,24 @@ struct CatalogView: View {
                     }
                 }
             }
-            .navigationTitle("Кино")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Color.clear.frame(width: 1, height: 1)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if let url = URL(string: "https://mix.kinogo.mu/") {
+                            currentURL = nil
+                            isLoading = true
+                            NotificationCenter.default.post(name: .reloadPlayer, object: url)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
             .searchable(text: $searchQuery, prompt: "Поиск фильма") {
                 ForEach(suggestions) { s in
                     Label(s.title, systemImage: "film")
@@ -88,6 +104,9 @@ struct CatalogView: View {
             }
             .navigationDestination(for: Movie.self) { movie in
                 MovieDetailView(movie: movie)
+            }
+            .navigationDestination(for: Actor.self) { actor in
+                ActorView(actor: actor)
             }
         }
     }
@@ -120,9 +139,7 @@ struct CatalogView: View {
                     }
                 }
             }
-        } catch {
-            // тихо игнорируем
-        }
+        } catch {}
     }
 
     private var sectionBar: some View {
