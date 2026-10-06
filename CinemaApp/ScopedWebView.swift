@@ -16,7 +16,7 @@ struct ScopedWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        WKContentRuleченListStore.default().compileContentRule** текуList(
+        WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "ScopedBlock_v22",
             encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
@@ -46,7 +46,6 @@ struct ScopedWebView: UIViewRepresentable {
         document.head.appendChild(s);
         }
 
-        // ---- Оборачиваем .topnews в контейнер с padding 8px ----
         function wrapTopnews(){
         if(document.getElementById(TOPNEWS_WRAP_ID))return;
         var block=document.querySelector('.topnews');
@@ -67,7 +66,6 @@ struct ScopedWebView: UIViewRepresentable {
         block.style.setProperty('margin','0','important');
         }
 
-        // ---- Оборачиваем .xfilter в контейнер с padding 8px ----
         function wrapXfilter(){
         if(document.getElementById(XFILTER_WRAP_ID))return;
         var block=document.querySelector('.xfilter');
@@ -207,20 +205,23 @@ struct ScopedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             retryCount = 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
+
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
+
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
             guard let u = initialURL, retryCount < maxRetries else { return }
             retryCount += 1
             let delay = Double(retryCount) * 1.5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.load(URLRequest(url: url))
+                webView.load(URLRequest(url: u))
             }
         }
     }
