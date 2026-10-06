@@ -19,11 +19,6 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
-    @State private var showShareSheetForURL = false
-    @State private var urlToShare: URL?
-
-    @State private var toastText: String? = nil
-
     @State private var debugTitle: String = ""
     @State private var debugMessage: String = ""
     @State private var showDebugOverlay = false
@@ -59,19 +54,6 @@ struct PlayerScreen: View {
                 }
                 if isLoading {
                     ProgressView().scaleEffect(1.6).tint(.white)
-                }
-                if let toast = toastText {
-                    VStack {
-                        Spacer()
-                        Text(toast)
-                            .font(.subheadline).bold()
-                            .padding(.horizontal, 16).padding(.vertical, 10)
-                            .background(Color.black.opacity(0.85))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                            .padding(.bottom, 60)
-                    }
-                    .transition(.opacity)
                 }
             }
             .navigationTitle(player.name)
@@ -127,30 +109,24 @@ struct PlayerScreen: View {
                         showCaptureSheet = false
                     },
                     onOpenInSafari: { url in
+                        // 1) закрываем sheet
                         showCaptureSheet = false
-                        UIPasteboard.general.string = url.absoluteString
-                        showToast("Ссылка скопирована")
-                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                        // 2) закрываем весь PlayerScreen — возвращаемся к описанию фильма
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            dismiss()
+                        }
+                        // 3) ждём, пока анимация dismiss закончится, открываем Safari
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                        }
                     },
                     onShare: { url in
-                        showCaptureSheet = false
-                        urlToShare = url
-                        showShareSheetForURL = true
-                    },
-                    onCopy: { url in
-                        showCaptureSheet = false
-                        UIPasteboard.general.string = url.absoluteString
-                        showToast("Ссылка скопирована")
+                        presentShareSheet(for: url)
                     },
                     onCancel: { showCaptureSheet = false }
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-            }
-            .sheet(isPresented: $showShareSheetForURL) {
-                if let url = urlToShare {
-                    ShareSheet(activityItems: [url])
-                }
             }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
                 TextField("https://… .mp4 или .m3u8", text: $manualURLText)
@@ -160,7 +136,6 @@ struct PlayerScreen: View {
                     let trimmed = manualURLText.trimmingCharacters(in: .whitespaces)
                     if let url = URL(string: trimmed) {
                         UIPasteboard.general.string = PlayerScreen.normalizeVideoURL(url).absoluteString
-                        showToast("Ссылка скопирована")
                     }
                     manualURLText = ""
                 }
@@ -176,11 +151,24 @@ struct PlayerScreen: View {
         }
     }
 
-    private func showToast(_ text: String) {
-        withAnimation { toastText = text }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            withAnimation { self.toastText = nil }
+    private func presentShareSheet(for url: URL) {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            return
         }
+        var top = root
+        while let presented = top.presentedViewController {
+            top = presented
+        }
+        let activity = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let pop = activity.popoverPresentationController {
+            pop.sourceView = top.view
+            pop.sourceRect = CGRect(x: top.view.bounds.midX,
+                                    y: top.view.bounds.midY,
+                                    width: 1, height: 1)
+            pop.permittedArrowDirections = []
+        }
+        top.present(activity, animated: true, completion: nil)
     }
 
     private var debugOverlay: some View {
