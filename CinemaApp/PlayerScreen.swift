@@ -187,8 +187,6 @@ struct PlayerScreen: View {
         return url
     }
 
-    // MARK: - Диагностика
-
     private func debugFetch(_ url: URL) {
         debugTitle = "Диагностика"
         debugMessage = "Загрузка…\n\(url.absoluteString)"
@@ -231,8 +229,6 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Скачивание (ручная сборка HLS через URLSession)
-
     private func startDownload(_ url: URL) {
         downloadingURL = url
         Downloader.downloadHLS(url: url) { result in
@@ -249,126 +245,5 @@ struct PlayerScreen: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - Скачивание HLS вручную (без AVAssetExportSession)
-
-enum Downloader {
-    enum DL: Error { case http(Int), emptyPlaylist, parseFailed }
-
-    static func downloadHLS(url: URL, completion: @escaping (Result<URL, Error>) -> Void) {
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-            var headers = HLSPrepare.baseHeaders
-            let pairs = cookies
-                .filter { $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo") }
-                .map { "\($0.name)=\($0.value)" }
-            if !pairs.isEmpty { headers["Cookie"] = pairs.joined(separator: "; ") }
-
-            fetchText(url: url, headers: headers) { master in
-                switch master {
-                case .failure(let e):
-                    completion(.failure(e))
-                case .success(let text):
-                    guard text.contains("#EXTM3U") else {
-                        // не HLS — качаем как файл напрямую
-                        fetchBinary(url: url, headers: headers, completion: completion)
-                        return
-                    }
-                    // выбираем первый вариант из master
-                    let variantURL = parseFirstVariant(text, base: url) ?? url
-                    fetchText(url: variantURL, headers: headers) { variantRes in
-                        switch variantRes {
-                        case .failure(let e): completion(.failure(e))
-                        case .success(let vtext):
-                            let segments = parseSegments(vtext, base: variantURL)
-                            guard !segments.isEmpty else {
-                                completion(.failure(DL.emptyPlaylist))
-                                return
-                            }
-                            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                            let dest = docs.appendingPathComponent("video.ts")
-                            try? FileManager.default.removeItem(at: dest)
-                            FileManager.default.createFile(atPath: dest.path, contents: nil)
-                            guard let handle = try? FileHandle(forWritingTo: dest) else {
-                                completion(.failure(DL.parseFailed))
-                                return
-                            }
-                            let group = DispatchGroup()
-                            var hadError: Error?
-                            for seg in segments {
-                                group.enter()
-                                fetchBinary(url: seg, headers: headers) { res in
-                                    if case .success(let fileURL) = res,
-                                       let data = try? Data(contentsOf: fileURL) {
-                                        handle.write(data)
-                                    } else if case .failure(let e) = res, hadError == nil {
-                                        hadError = e
-                                    }
-                                    group.leave()
-                                }
-                            }
-                            group.notify(queue: .global()) {
-                                try? handle.close()
-                                if let e = hadError { completion(.failure(e)); return }
-                                completion(.success(dest))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private static func fetchText(url: URL, headers: [String: String], completion: @escaping (Result<String, Error>) -> Void) {
-        var req = URLRequest(url: url)
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-        URLSession.shared.dataTask(with: req) { data, response, error in
-            if let error = error { completion(.failure(error)); return }
-            guard let http = response as? HTTPURLResponse else {
-                completion(.failure(DL.parseFailed)); return
-            }
-            guard (200...299).contains(http.statusCode) else {
-                completion(.failure(DL.http(http.statusCode))); return
-            }
-            let text = String(data: data ?? Data(), encoding: .utf8) ?? ""
-            completion(.success(text))
-        }.resume()
-    }
-
-    private static func fetchBinary(url: URL, headers: [String: String], completion: @escaping (Result<URL, Error>) -> Void) {
-        var req = URLRequest(url: url)
-        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
-        URLSession.shared.downloadTask(with: req) { local, response, error in
-            if let error = error { completion(.failure(error)); return }
-            guard let http = response as? HTTPURLResponse else {
-                completion(.failure(DL.parseFailed)); return
-            }
-            guard (200...299).contains(http.statusCode) else {
-                completion(.failure(DL.http(http.statusCode))); return
-            }
-            guard let local = local else { completion(.failure(DL.parseFailed)); return }
-            completion(.success(local))
-        }.resume()
-    }
-
-    private static func parseFirstVariant(_ master: String, base: URL) -> URL? {
-        let lines = master.components(separatedBy: "\n")
-        for l in lines {
-            let t = l.trimmingCharacters(in: .whitespaces)
-            if t.isEmpty || t.hasPrefix("#") { continue }
-            if let u = URL(string: t, relativeTo: base)?.absoluteURL { return u }
-        }
-        return nil
-    }
-
-    private static func parseSegments(_ playlist: String, base: URL) -> [URL] {
-        var out: [URL] = []
-        for l in playlist.components(separatedBy: "\n") {
-            let t = l.trimmingCharacters(in: .whitespaces)
-            if t.isEmpty || t.hasPrefix("#") { continue }
-            if let u = URL(string: t, relativeTo: base)?.absoluteURL { out.append(u) }
-        }
-        return out
     }
 }
