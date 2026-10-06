@@ -1,6 +1,5 @@
 import SwiftUI
 import WebKit
-import AVFoundation
 
 struct PlayerScreen: View {
     let player: Player
@@ -19,10 +18,6 @@ struct PlayerScreen: View {
     @State private var showNativePlayer = false
     @State private var nativePlayerURL: URL?
 
-    @State private var downloadingURL: URL?
-    @State private var downloadedFile: URL?
-    @State private var showShareSheet = false
-
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
@@ -35,14 +30,15 @@ struct PlayerScreen: View {
                         url: url,
                         isLoading: $isLoading,
                         onVideoURLTap: { videoURL in
-                            let now = Date()
+                            let normalized = PlayerScreen.normalizeVideoURL(videoURL)
                             if showCaptureSheet {
-                                capturedVideoURL = videoURL
+                                capturedVideoURL = normalized
                                 return
                             }
+                            let now = Date()
                             if now.timeIntervalSince(lastCaptureTime) < 1.5 { return }
                             lastCaptureTime = now
-                            capturedVideoURL = videoURL
+                            capturedVideoURL = normalized
                             showCaptureSheet = true
                         },
                         onVoicesDetected: { list in
@@ -56,19 +52,6 @@ struct PlayerScreen: View {
                 }
                 if isLoading {
                     ProgressView().scaleEffect(1.6).tint(.white)
-                }
-                if downloadingURL != nil {
-                    ZStack {
-                        Color.black.opacity(0.6).ignoresSafeArea()
-                        VStack(spacing: 12) {
-                            ProgressView().tint(.white).scaleEffect(1.4)
-                            Text("Скачивание…")
-                                .foregroundStyle(.white).font(.footnote)
-                        }
-                        .padding(24)
-                        .background(Color.black.opacity(0.8))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
                 }
             }
             .navigationTitle(player.name)
@@ -123,7 +106,7 @@ struct PlayerScreen: View {
                     },
                     onDownload: { url in
                         showCaptureSheet = false
-                        startDownload(url)
+                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     },
                     onCancel: { showCaptureSheet = false }
                 )
@@ -136,11 +119,6 @@ struct PlayerScreen: View {
                         Color.black.ignoresSafeArea()
                         NativePlayerView(url: url).ignoresSafeArea()
                     }
-                }
-            }
-            .sheet(isPresented: $showShareSheet) {
-                if let file = downloadedFile {
-                    ShareSheet(activityItems: [file])
                 }
             }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
@@ -161,68 +139,13 @@ struct PlayerScreen: View {
         }
     }
 
-    private func startDownload(_ url: URL) {
-        let path = url.path.lowercased()
-        if path.hasSuffix(".m3u8") || path.contains(".m3u8") || path.contains("hls") {
-            downloadHLS(url)
-        } else {
-            downloadDirect(url)
+    static func normalizeVideoURL(_ url: URL) -> URL {
+        let s = url.absoluteString
+        if let r = s.range(of: ":hls:") {
+            let trimmed = String(s[..<r.lowerBound])
+            if let u = URL(string: trimmed) { return u }
         }
-    }
-
-    private func downloadDirect(_ url: URL) {
-        downloadingURL = url
-        var req = URLRequest(url: url)
-        req.setValue("https://cinemar.cc/", forHTTPHeaderField: "Referer")
-        req.setValue("https://cinemar.cc", forHTTPHeaderField: "Origin")
-        URLSession.shared.downloadTask(with: req) { localURL, _, _ in
-            DispatchQueue.main.async { downloadingURL = nil }
-            guard let localURL = localURL else { return }
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let name = url.lastPathComponent.isEmpty ? "video.mp4" : url.lastPathComponent
-            let dest = docs.appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: dest)
-            try? FileManager.default.moveItem(at: localURL, to: dest)
-            DispatchQueue.main.async {
-                downloadedFile = dest
-                showShareSheet = true
-            }
-        }.resume()
-    }
-
-    private func downloadHLS(_ url: URL) {
-        downloadingURL = url
-        let headers: [String: String] = [
-            "Referer": "https://cinemar.cc/",
-            "Origin": "https://cinemar.cc",
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        ]
-        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        let origScheme = (comps?.scheme ?? "https").lowercased()
-        comps?.scheme = (origScheme == "https") ? "cinemap-https" : "cinemap-http"
-        let proxyURL = comps?.url ?? url
-
-        let asset = AVURLAsset(url: proxyURL)
-        let loader = HeaderResourceLoader(headers: headers, originalScheme: origScheme)
-        asset.resourceLoader.setDelegate(loader, queue: DispatchQueue.global(qos: .userInitiated))
-
-        DispatchQueue.main.async {
-            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let dest = docs.appendingPathComponent("video.mp4")
-            try? FileManager.default.removeItem(at: dest)
-            let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality)
-            export?.outputURL = dest
-            export?.outputFileType = .mp4
-            export?.exportAsynchronously {
-                DispatchQueue.main.async {
-                    self.downloadingURL = nil
-                    if export?.status == .completed {
-                        self.downloadedFile = dest
-                        self.showShareSheet = true
-                    }
-                }
-            }
-        }
+        return url
     }
 }
 
@@ -248,7 +171,6 @@ struct CaptureSheetView: View {
                             .lineLimit(8)
                     }
                 }
-
                 if !voices.isEmpty {
                     Section("Озвучка") {
                         Picker("Озвучка", selection: Binding(
@@ -262,7 +184,6 @@ struct CaptureSheetView: View {
                         .pickerStyle(.menu)
                     }
                 }
-
                 if let url = videoURL {
                     Section {
                         Button {
@@ -273,7 +194,7 @@ struct CaptureSheetView: View {
                         Button {
                             onDownload(url)
                         } label: {
-                            Label("Скачать файл", systemImage: "arrow.down.circle")
+                            Label("Скачать в Safari", systemImage: "safari")
                         }
                     }
                 }
@@ -308,73 +229,12 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        let hunterJS = """
-        (function(){
-        if (window.__hunterInstalled) return;
-        window.__hunterInstalled = true;
-        function reportVideo(u){
-        if(!u) return;
-        var l=String(u).toLowerCase();
-        if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
-        try{window.webkit.messageHandlers.videoURL.postMessage(String(u));}catch(e){}
-        }
-        try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
-        try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
-        try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
-        try{
-        if(!window.__hunterMediaHooked){
-        window.__hunterMediaHooked=true;
-        try{
-        var _srcDesc=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'src');
-        if(_srcDesc&&_srcDesc.set){
-        Object.defineProperty(HTMLMediaElement.prototype,'src',{
-        set:function(v){try{reportVideo(v);}catch(e){}return _srcDesc.set.call(this,v);},
-        get:_srcDesc.get,
-        configurable:true
-        });
-        }
-        }catch(e){}
-        try{
-        var _origSetAttribute=Element.prototype.setAttribute;
-        Element.prototype.setAttribute=function(n,v){
-        try{if((n==='src'||n==='data-src')&&v)reportVideo(v);}catch(e){}
-        return _origSetAttribute.apply(this,arguments);
-        };
-        }catch(e){}
-        }
-        }catch(e){}
-        function readVoices(){
-        try{
-        var btns=document.querySelectorAll('.playlist-dropdown button');
-        var arr=[];
-        for(var i=0;i<btns.length;i++){
-        var t=(btns[i].textContent||'').replace(/\\s+/g,' ').trim();
-        if(t&&arr.indexOf(t)===-1) arr.push(t);
-        }
-        if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
-        }catch(e){}
-        }
-        window.addEventListener('message',function(e){
-        if(!e.data||!e.data.type) return;
-        if(e.data.type==='selectVoice'){
-        var title=document.querySelector('.playlist-title');
-        if(title) title.click();
-        setTimeout(function(){
-        var all=document.querySelectorAll('.playlist-dropdown button');
-        for(var i=0;i<all.length;i++){
-        if((all[i].textContent||'').replace(/\\s+/g,' ').trim()===e.data.text){all[i].click();return;}
-        }
-        },250);
-        }
-        });
-        setTimeout(readVoices,2000);
-        setTimeout(readVoices,5000);
-        setTimeout(readVoices,9000);
-        })();
-        """
-        let hunterScript = WKUserScript(source: hunterJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        let hunterScript = WKUserScript(
+            source: PlayerJS.hunter,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        )
         config.userContentController.addUserScript(hunterScript)
-
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
 
@@ -397,7 +257,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         if let voice = pendingVoice, !voice.isEmpty {
             let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
                            .replacingOccurrences(of: "'", with: "\\'")
-            // Одиночная отправка во все iframe. Без повторов.
             let js = """
             (function(){
             try{window.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
