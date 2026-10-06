@@ -17,7 +17,7 @@ struct ScopedWebView: UIViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v19",
+            forIdentifier: "ScopedBlock_v20",
             encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -43,9 +43,6 @@ struct ScopedWebView: UIViewRepresentable {
         '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
 
         /* ============ ВИЗУАЛЬНЫЕ ОТСТУПЫ ============ */
-        /* Карусель сверху */
-        '.main__header .carousel,.carousel{position:relative !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
-        '.carousel__items{border-radius:10px !important;overflow:hidden !important;}'+
         /* Блок с аккордеоном категорий */
         '.xfilter{border-bottom:none !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
         '.xfilter > *{border-radius:10px !important;}'+
@@ -159,7 +156,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
+                     forNavigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 if isMovieURL(url) { onMovieTap?(url) }
