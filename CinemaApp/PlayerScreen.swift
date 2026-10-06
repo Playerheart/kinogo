@@ -208,75 +208,51 @@ struct PlayerScreen: View {
         return url
     }
 
-    // MARK: - Диагностика (без cookies, с таймаутом)
+    // MARK: - Диагностика сети (мультитест)
 
     private func debugFetch(_ url: URL) {
-        debugTitle = "Диагностика"
-        debugMessage = "Загрузка…\n\(url.absoluteString)"
+        debugTitle = "Диагностика сети"
+        debugMessage = "Тестирую три URL…"
         showDebug = true
 
-        let start = Date()
+        var results: [String] = []
+        let lock = NSLock()
+        let group = DispatchGroup()
 
-        var req = URLRequest(url: url,
-                             cachePolicy: .reloadIgnoringLocalCacheData,
-                             timeoutInterval: 12)
-        for (k, v) in HLSPrepare.baseHeaders {
-            req.setValue(v, forHTTPHeaderField: k)
+        let tests: [(String, URL)] = [
+            ("google.com",        URL(string: "https://www.google.com/")!),
+            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!),
+            ("host.cinemap.cc",   url)
+        ]
+
+        for (name, testURL) in tests {
+            group.enter()
+            var req = URLRequest(url: testURL,
+                                 cachePolicy: .reloadIgnoringLocalCacheData,
+                                 timeoutInterval: 8)
+            for (k, v) in HLSPrepare.baseHeaders { req.setValue(v, forHTTPHeaderField: k) }
+            let start = Date()
+            URLSession.shared.dataTask(with: req) { data, response, error in
+                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
+                var line: String
+                if let err = error as NSError? {
+                    line = "\(name)  ❌  \(elapsed)с  \(err.domain)#\(err.code)  \(err.localizedDescription)"
+                } else if let http = response as? HTTPURLResponse {
+                    line = "\(name)  ✅  \(elapsed)с  HTTP \(http.statusCode)  \(data?.count ?? 0) б"
+                } else {
+                    line = "\(name)  ?  \(elapsed)с  нет ответа"
+                }
+                lock.lock()
+                results.append(line)
+                let snapshot = results.sorted().joined(separator: "\n")
+                lock.unlock()
+                DispatchQueue.main.async { self.debugMessage = snapshot }
+                group.leave()
+            }.resume()
         }
 
-        URLSession.shared.dataTask(with: req) { data, response, error in
-            DispatchQueue.main.async {
-                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
-                if let err = error as NSError? {
-                    self.debugMessage = """
-                    URL: \(url.absoluteString)
-
-                    ОШИБКА (\(elapsed) с)
-                    Домен: \(err.domain)
-                    Код: \(err.code)
-                    Описание: \(err.localizedDescription)
-                    """
-                    return
-                }
-                guard let http = response as? HTTPURLResponse else {
-                    self.debugMessage = "Нет HTTP-ответа (\(elapsed) с)"
-                    return
-                }
-                let mime = http.mimeType ?? "?"
-                let len = data?.count ?? 0
-                let head = String(data: (data ?? Data()).prefix(500), encoding: .utf8) ?? "<бинарные данные>"
-                let allHeaders = http.allHeaderFields
-                    .map { "\($0.key): \($0.value)" }
-                    .sorted()
-                    .joined(separator: "\n")
-
-                self.debugMessage = """
-                HTTP: \(http.statusCode)   (\(elapsed) с)
-                MIME: \(mime)
-                Длина: \(len) байт
-
-                Первые 500 символов:
-                \(head)
-
-                Заголовки:
-                \(allHeaders)
-                """
-            }
-        }.resume()
-
-        // Страховка: если URLSession вообще не ответит за 15 с
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-            if self.showDebug && self.debugMessage.hasPrefix("Загрузка") {
-                self.debugMessage = """
-                ТАЙМАУТ 15 сек.
-                URLSession не отвечает вообще.
-
-                URL: \(url.absoluteString)
-
-                Значит сервер принимает соединение, но не отдаёт ответ,
-                либо iOS не даёт разрешения на этот домен (ATS/DNS).
-                """
-            }
+        group.notify(queue: .main) {
+            self.debugMessage = results.sorted().joined(separator: "\n")
         }
     }
 
