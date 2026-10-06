@@ -16,8 +16,8 @@ struct ScopedWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-        WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v21",
+        WKContentRuleченListStore.default().compileContentRule** текуList(
+            forIdentifier: "ScopedBlock_v22",
             encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -26,6 +26,8 @@ struct ScopedWebView: UIViewRepresentable {
         let js = """
         (function(){
         var HIDE_ID='__scoped_hide__';
+        var TOPNEWS_WRAP_ID='__topnews_wrapper__';
+        var XFILTER_WRAP_ID='__xfilter_wrapper__';
 
         function ensureStyle(){
         if(document.getElementById(HIDE_ID))return;
@@ -40,53 +42,57 @@ struct ScopedWebView: UIViewRepresentable {
         '.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,'+
         'a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],'+
         'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
-        '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
-        '.xfilter{border-radius:10px !important;overflow:hidden !important;}';
-
+        '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}';
         document.head.appendChild(s);
         }
 
-        // ---- Спейсеры: вставляем реальные <div> с высотой 8px,
-        // чтобы сдвинуть блоки, если CSS margin не работает ----
-        function makeSpacer(id, heightPx){
-        var sp=document.createElement('div');
-        sp.id=id;
-        sp.style.setProperty('height',heightPx+'px','important');
-        sp.style.setProperty('width','100%','important');
-        sp.style.setProperty('display','block','important');
-        sp.style.setProperty('background','transparent','important');
-        sp.style.setProperty('flex-shrink','0','important');
-        return sp;
+        // ---- Оборачиваем .topnews в контейнер с padding 8px ----
+        function wrapTopnews(){
+        if(document.getElementById(TOPNEWS_WRAP_ID))return;
+        var block=document.querySelector('.topnews');
+        if(!block)return;
+        var parent=block.parentNode;
+        if(!parent)return;
+        if(parent.id===TOPNEWS_WRAP_ID)return;
+        var wrapper=document.createElement('div');
+        wrapper.id=TOPNEWS_WRAP_ID;
+        wrapper.style.setProperty('padding','8px','important');
+        wrapper.style.setProperty('box-sizing','border-box','important');
+        wrapper.style.setProperty('width','100%','important');
+        wrapper.style.setProperty('overflow','hidden','important');
+        parent.insertBefore(wrapper,block);
+        wrapper.appendChild(block);
+        block.style.setProperty('border-radius','10px','important');
+        block.style.setProperty('overflow','hidden','important');
+        block.style.setProperty('margin','0','important');
         }
 
-        function injectSpacers(){
-        // 1. Спейсеры вокруг .xfilter (блок «Фильмы / Категории»)
-        var xf=document.querySelector('.xfilter');
-        if(xf&&xf.parentNode){
-        if(!document.getElementById('__xf_spacer_top__')){
-        xf.parentNode.insertBefore(makeSpacer('__xf_spacer_top__',8),xf);
-        }
-        if(!document.getElementById('__xf_spacer_bottom__')){
-        xf.parentNode.insertBefore(makeSpacer('__xf_spacer_bottom__',8),xf.nextSibling);
-        }
-        }
-
-        // 2. Спейсеры вокруг главного каруселя (постеры «Новинки»)
-        var cr=document.querySelector('.main__header .carousel')||document.querySelector('.carousel');
-        if(cr&&cr.parentNode){
-        if(!document.getElementById('__cr_spacer_top__')){
-        cr.parentNode.insertBefore(makeSpacer('__cr_spacer_top__',8),cr);
-        }
-        if(!document.getElementById('__cr_spacer_bottom__')){
-        cr.parentNode.insertBefore(makeSpacer('__cr_spacer_bottom__',8),cr.nextSibling);
-        }
-        }
+        // ---- Оборачиваем .xfilter в контейнер с padding 8px ----
+        function wrapXfilter(){
+        if(document.getElementById(XFILTER_WRAP_ID))return;
+        var block=document.querySelector('.xfilter');
+        if(!block)return;
+        var parent=block.parentNode;
+        if(!parent)return;
+        if(parent.id===XFILTER_WRAP_ID)return;
+        var wrapper=document.createElement('div');
+        wrapper.id=XFILTER_WRAP_ID;
+        wrapper.style.setProperty('padding','8px','important');
+        wrapper.style.setProperty('box-sizing','border-box','important');
+        wrapper.style.setProperty('width','100%','important');
+        wrapper.style.setProperty('overflow','hidden','important');
+        parent.insertBefore(wrapper,block);
+        wrapper.appendChild(block);
+        block.style.setProperty('border-radius','10px','important');
+        block.style.setProperty('overflow','hidden','important');
+        block.style.setProperty('margin','0','important');
         }
 
         function fixStandalone(){
         var list=document.querySelectorAll('.topnews__content, [class*=\\\"topnews__\\\"]');
         for(var i=0;i<list.length;i++){
         var el=list[i];
+        if(el.closest('#'+TOPNEWS_WRAP_ID))continue;
         el.style.setProperty('padding-left','6px','important');
         el.style.setProperty('padding-right','6px','important');
         el.style.setProperty('box-sizing','border-box','important');
@@ -108,7 +114,8 @@ struct ScopedWebView: UIViewRepresentable {
 
         function run(){
         try{ensureStyle();}catch(e){}
-        try{injectSpacers();}catch(e){}
+        try{wrapTopnews();}catch(e){}
+        try{wrapXfilter();}catch(e){}
         try{fixStandalone();}catch(e){}
         try{hideByImage();}catch(e){}
         }
@@ -213,7 +220,7 @@ struct ScopedWebView: UIViewRepresentable {
             retryCount += 1
             let delay = Double(retryCount) * 1.5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                webView.load(URLRequest(url: u))
+                webView.load(URLRequest(url: url))
             }
         }
     }
