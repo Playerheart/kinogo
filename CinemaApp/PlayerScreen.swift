@@ -26,6 +26,10 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
+    @State private var debugTitle: String = ""
+    @State private var debugMessage: String = ""
+    @State private var showDebug = false
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -83,6 +87,13 @@ struct PlayerScreen: View {
                         Button { showVoicePicker = true } label: {
                             Image(systemName: "waveform")
                         }
+                    }
+                    Button {
+                        if let url = capturedVideoURL ?? URL(string: player.url) {
+                            debugFetch(url)
+                        }
+                    } label: {
+                        Image(systemName: "stethoscope")
                     }
                     Button { showManualURLInput = true } label: {
                         Image(systemName: "link")
@@ -159,6 +170,11 @@ struct PlayerScreen: View {
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
             }
+            .alert(debugTitle, isPresented: $showDebug) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(debugMessage)
+            }
         }
     }
 
@@ -171,36 +187,131 @@ struct PlayerScreen: View {
         return url
     }
 
-    private func startDownload(_ url: URL) {
-        downloadingURL = url
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-            var headers = HLSPrepare.baseHeaders
-            let cookiePairs = cookies
-                .filter { $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo") }
-                .map { "\($0.name)=\($0.value)" }
-            if !cookiePairs.isEmpty { headers["Cookie"] = cookiePairs.joined(separator: "; ") }
+    // MARK: - Диагностика
 
-            HLSPrepare.prepare(url: url, headers: headers) { prepared in
-                let asset = AVURLAsset(url: prepared.playbackURL)
-                if let loader = prepared.loader {
-                    asset.resourceLoader.setDelegate(loader, queue: DispatchQueue.global(qos: .userInitiated))
-                }
+    private func debugFetch(_ url: URL) {
+        debugTitle = "Диагностика"
+        debugMessage = "Загрузка…\n\(url.absoluteString)"
+        showDebug = true
+
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            let relevant = cookies.filter {
+                $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo")
+            }
+            let cookieStr = relevant.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
+            let cookieInfo = "Cookies (\(relevant.count)): \(cookieStr.isEmpty ? "—" : cookieStr)\n\n"
+
+            var req = URLRequest(url: url)
+            for (k, v) in HLSPrepare.baseHeaders { req.setValue(v, forHTTPHeaderField: k) }
+            if !cookieStr.isEmpty { req.setValue(cookieStr, forHTTPHeaderField: "Cookie") }
+
+            URLSession.shared.dataTask(with: req) { data, response, error in
                 DispatchQueue.main.async {
-                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    let dest = docs.appendingPathComponent("video.mp4")
-                    try? FileManager.default.removeItem(at: dest)
-                    guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-                        self.downloadingURL = nil
+                    if let error = error {
+                        debugMessage = cookieInfo + "Ошибка: \(error.localizedDescription)"
                         return
                     }
-                    export.outputURL = dest
-                    export.outputFileType = .mp4
-                    export.exportAsynchronously {
-                        DispatchQueue.main.async {
-                            self.downloadingURL = nil
-                            if export.status == .completed {
-                                self.downloadedFile = dest
-                                self.showShareSheet = true
+                    guard let http = response as? HTTPURLResponse else {
+                        debugMessage = cookieInfo + "Нет HTTP-ответа"
+                        return
+                    }
+                    let mime = http.mimeType ?? "?"
+                    let len = data?.count ?? 0
+                    let head = String(data: (data ?? Data()).prefix(300), encoding: .utf8) ?? "<binary>"
+                    debugMessage = """
+                    \(cookieInfo)HTTP: \(http.statusCode)
+                    MIME: \(mime)
+                    Длина: \(len) байт
+
+                    Первые 300 символов:
+                    \(head)
+                    """
+                }
+            }.resume()
+        }
+    }
+
+    // MARK: - Скачивание (ручная сборка HLS через URLSession)
+
+    private func startDownload(_ url: URL) {
+        downloadingURL = url
+        Downloader.downloadHLS(url: url) { result in
+            DispatchQueue.main.async {
+                self.downloadingURL = nil
+                switch result {
+                case .success(let file):
+                    self.downloadedFile = file
+                    self.showShareSheet = true
+                case .failure(let err):
+                    self.debugTitle = "Ошибка скачивания"
+                    self.debugMessage = err.localizedDescription
+                    self.showDebug = true
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Скачивание HLS вручную (без AVAssetExportSession)
+
+enum Downloader {
+    enum DL: Error { case http(Int), emptyPlaylist, parseFailed }
+
+    static func downloadHLS(url: URL, completion: @escaping (Result<URL, Error>) -> Void) {
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            var headers = HLSPrepare.baseHeaders
+            let pairs = cookies
+                .filter { $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo") }
+                .map { "\($0.name)=\($0.value)" }
+            if !pairs.isEmpty { headers["Cookie"] = pairs.joined(separator: "; ") }
+
+            fetchText(url: url, headers: headers) { master in
+                switch master {
+                case .failure(let e):
+                    completion(.failure(e))
+                case .success(let text):
+                    guard text.contains("#EXTM3U") else {
+                        // не HLS — качаем как файл напрямую
+                        fetchBinary(url: url, headers: headers, completion: completion)
+                        return
+                    }
+                    // выбираем первый вариант из master
+                    let variantURL = parseFirstVariant(text, base: url) ?? url
+                    fetchText(url: variantURL, headers: headers) { variantRes in
+                        switch variantRes {
+                        case .failure(let e): completion(.failure(e))
+                        case .success(let vtext):
+                            let segments = parseSegments(vtext, base: variantURL)
+                            guard !segments.isEmpty else {
+                                completion(.failure(DL.emptyPlaylist))
+                                return
+                            }
+                            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                            let dest = docs.appendingPathComponent("video.ts")
+                            try? FileManager.default.removeItem(at: dest)
+                            FileManager.default.createFile(atPath: dest.path, contents: nil)
+                            guard let handle = try? FileHandle(forWritingTo: dest) else {
+                                completion(.failure(DL.parseFailed))
+                                return
+                            }
+                            let group = DispatchGroup()
+                            var hadError: Error?
+                            for seg in segments {
+                                group.enter()
+                                fetchBinary(url: seg, headers: headers) { res in
+                                    if case .success(let fileURL) = res,
+                                       let data = try? Data(contentsOf: fileURL) {
+                                        handle.write(data)
+                                    } else if case .failure(let e) = res, hadError == nil {
+                                        hadError = e
+                                    }
+                                    group.leave()
+                                }
+                            }
+                            group.notify(queue: .global()) {
+                                try? handle.close()
+                                if let e = hadError { completion(.failure(e)); return }
+                                completion(.success(dest))
                             }
                         }
                     }
@@ -208,212 +319,56 @@ struct PlayerScreen: View {
             }
         }
     }
-}
 
-struct CaptureSheetView: View {
-    let videoURL: URL?
-    let voices: [String]
-    let currentVoice: String?
-
-    var onVoiceChange: (String) -> Void
-    var onPlay: (URL) -> Void
-    var onDownload: (URL) -> Void
-    var onCancel: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if let url = videoURL {
-                    Section("Ссылка на видео") {
-                        Text(url.absoluteString)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .lineLimit(8)
-                    }
-                }
-
-                if !voices.isEmpty {
-                    Section("Озвучка") {
-                        Picker("Озвучка", selection: Binding(
-                            get: { currentVoice ?? voices.first ?? "" },
-                            set: { newVal in
-                                if newVal != currentVoice { onVoiceChange(newVal) }
-                            }
-                        )) {
-                            ForEach(voices, id: \.self) { v in Text(v).tag(v) }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
-
-                if let url = videoURL {
-                    Section {
-                        Button {
-                            onPlay(url)
-                        } label: {
-                            Label("Играть в нативном плеере", systemImage: "play.fill")
-                        }
-                        Button {
-                            onDownload(url)
-                        } label: {
-                            Label("Скачать файл", systemImage: "arrow.down.circle")
-                        }
-                    }
-                }
+    private static func fetchText(url: URL, headers: [String: String], completion: @escaping (Result<String, Error>) -> Void) {
+        var req = URLRequest(url: url)
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let http = response as? HTTPURLResponse else {
+                completion(.failure(DL.parseFailed)); return
             }
-            .navigationTitle("Ссылка на видео")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { onCancel() }
-                }
+            guard (200...299).contains(http.statusCode) else {
+                completion(.failure(DL.http(http.statusCode))); return
             }
-        }
-    }
-}
-
-extension Notification.Name {
-    static let reloadPlayer = Notification.Name("reloadPlayer")
-}
-
-struct RawPlayerWebView: UIViewRepresentable {
-    let url: URL
-    @Binding var isLoading: Bool
-    var onVideoURLTap: ((URL) -> Void)? = nil
-    var onVoicesDetected: (([String]) -> Void)? = nil
-    @Binding var pendingVoice: String?
-
-    func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.allowsInlineMediaPlayback = true
-        if #available(iOS 10.0, *) {
-            config.mediaTypesRequiringUserActionForPlayback = []
-        }
-        config.preferences.javaScriptCanOpenWindowsAutomatically = true
-
-        let hunterScript = WKUserScript(
-            source: PlayerJS.hunter,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: false
-        )
-        config.userContentController.addUserScript(hunterScript)
-        config.userContentController.add(context.coordinator, name: "videoURL")
-        config.userContentController.add(context.coordinator, name: "voiceList")
-
-        let webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = context.coordinator
-        webView.uiDelegate = context.coordinator
-        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        webView.isOpaque = false
-        webView.backgroundColor = .black
-        webView.scrollView.backgroundColor = .black
-
-        context.coordinator.onVideoURLTap = onVideoURLTap
-        context.coordinator.onVoicesDetected = onVoicesDetected
-        context.coordinator.webView = webView
-        context.coordinator.load(url: url)
-        return webView
+            let text = String(data: data ?? Data(), encoding: .utf8) ?? ""
+            completion(.success(text))
+        }.resume()
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {
-        if let voice = pendingVoice, !voice.isEmpty {
-            let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
-                           .replacingOccurrences(of: "'", with: "\\'")
-            let js = """
-            (function(){
-            try{window.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
-            var frames=document.querySelectorAll('iframe');
-            for(var i=0;i<frames.length;i++){
-            try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
+    private static func fetchBinary(url: URL, headers: [String: String], completion: @escaping (Result<URL, Error>) -> Void) {
+        var req = URLRequest(url: url)
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        URLSession.shared.downloadTask(with: req) { local, response, error in
+            if let error = error { completion(.failure(error)); return }
+            guard let http = response as? HTTPURLResponse else {
+                completion(.failure(DL.parseFailed)); return
             }
-            })();
-            """
-            uiView.evaluateJavaScript(js, completionHandler: nil)
-            DispatchQueue.main.async { pendingVoice = nil }
-        }
+            guard (200...299).contains(http.statusCode) else {
+                completion(.failure(DL.http(http.statusCode))); return
+            }
+            guard let local = local else { completion(.failure(DL.parseFailed)); return }
+            completion(.success(local))
+        }.resume()
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
+    private static func parseFirstVariant(_ master: String, base: URL) -> URL? {
+        let lines = master.components(separatedBy: "\n")
+        for l in lines {
+            let t = l.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { continue }
+            if let u = URL(string: t, relativeTo: base)?.absoluteURL { return u }
+        }
+        return nil
+    }
 
-    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
-        weak var webView: WKWebView?
-        let isLoading: Binding<Bool>
-        var onVideoURLTap: ((URL) -> Void)?
-        var onVoicesDetected: (([String]) -> Void)?
-        private var observer: NSObjectProtocol?
-
-        init(isLoading: Binding<Bool>) {
-            self.isLoading = isLoading
-            super.init()
-            observer = NotificationCenter.default.addObserver(
-                forName: .reloadPlayer, object: nil, queue: .main
-            ) { [weak self] note in
-                guard let self = self, let url = note.object as? URL else { return }
-                self.load(url: url)
-            }
+    private static func parseSegments(_ playlist: String, base: URL) -> [URL] {
+        var out: [URL] = []
+        for l in playlist.components(separatedBy: "\n") {
+            let t = l.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { continue }
+            if let u = URL(string: t, relativeTo: base)?.absoluteURL { out.append(u) }
         }
-
-        deinit {
-            if let o = observer { NotificationCenter.default.removeObserver(o) }
-        }
-
-        func load(url: URL) {
-            guard let webView = webView else { return }
-            var request = URLRequest(url: url)
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
-            webView.load(request)
-        }
-
-        func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
-            switch message.name {
-            case "videoURL":
-                guard let str = message.body as? String, let url = URL(string: str) else { return }
-                DispatchQueue.main.async { self.onVideoURLTap?(url) }
-            case "voiceList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onVoicesDetected?(arr) }
-            default: break
-            }
-        }
-
-        private func isVideoURL(_ url: URL) -> Bool {
-            let s = url.absoluteString.lowercased()
-            return s.contains(".mp4") || s.contains(".m3u8") ||
-                   s.contains(".mkv") || s.contains(".webm") ||
-                   s.contains(".mov") || s.contains(".m4v")
-        }
-
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
-                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
-            if isVideoURL(url) { onVideoURLTap?(url); decisionHandler(.cancel); return }
-            decisionHandler(.allow)
-        }
-
-        func webView(_ webView: WKWebView,
-                     createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction navigationAction: WKNavigationAction,
-                     windowFeatures: WKWindowFeatures) -> WKWebView? {
-            if let url = navigationAction.request.url {
-                if isVideoURL(url) { onVideoURLTap?(url) }
-                else { webView.load(navigationAction.request) }
-            }
-            return nil
-        }
-
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            DispatchQueue.main.async { self.isLoading.wrappedValue = true }
-        }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
-        }
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
-        }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
-        }
+        return out
     }
 }
