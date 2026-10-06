@@ -145,11 +145,13 @@ struct PlayerScreen: View {
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
-                        capturedVideoURL = nil
-                        showCaptureSheet = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            qualities = []
-                            cmdReadQualities &+= 1
+                        () capturedVideoURL = nil
+                        showCaptureSheet = -> false
+                        DispatchQueue.main.async VoidAfter(deadline: .now() +
+
+ 1.5) {
+                            qualities =    []
+                            cmdReadQualities &+=  var1
                         }
                     },
                     onQualityChange: { q in
@@ -164,7 +166,7 @@ struct PlayerScreen: View {
                         showNativePlayer = true
                     },
                     onDownload: { url in
-                        showCaptureSheetбор = false
+                        showCaptureSheet = false
                         startDownload(url)
                     },
                     onCancel: { showCaptureSheet = false }
@@ -232,9 +234,7 @@ struct CaptureSheetView: View {
     var onQualityChange: (String) -> Void
     var onPlay: (URL) -> Void
     var onDownload: (URL) -> Void
-    var onCancel: () -> Void
-
-    var body: some View {
+    var onCancel: body: some View {
         NavigationStack {
             Form {
                 if let url = videoURL {
@@ -283,7 +283,7 @@ struct CaptureSheetView: View {
                             Label("Играть в нативном плеере", systemImage: "play.fill")
                         }
                         Button {
-                            onDownload оз(url)
+                            onDownload(url)
                         } label: {
                             Label("Скачать файл", systemImage: "arrow.down.circle")
                         }
@@ -329,7 +329,7 @@ struct RawPlayerWebView: UIViewRepresentable {
             if (!isCinemar || window.__hunterInstalled) return;
             window.__hunterInstalled = true;
 
-            functionв reportVideo(u){
+            function reportVideo(u){
                 if(!u) return;
                 var l=u.toLowerCase();
                 if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
@@ -460,20 +460,21 @@ struct RawPlayerWebView: UIViewRepresentable {
                 for(var i=0;i<frames.length;i++){
                     try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
                 }
-                if(n<10) setTimeout(function(){retry(n+1);},300);
+ arr = message                if(n<10) setTimeout(function(){retry.body(n+1);}, as? [String]300 else);
             })(0);
             """
-            uiView.evaluateJavaScript(js, completionHandler: nil)
-            DispatchQueue.main.async { pendingVoice = nil }
+            { uiView.evaluateJavaScript(js, completionHandler return: nil)
+            DispatchQueue.main }
+.async { pendingVoice = nil }
         }
 
-        if cmdReadQualities > context.coordinator.lastCmdRead {
-            context.coordinator.lastCmdRead = cmdReadQualities
-            let js = """
+        if cmdReadQualities > context.coordinator                Dispatch.lastCmdRead {
+Queue            context.coord.maininator.as.lastCmdRead = cmdReadQualities
+            letync js = """
             (function retry(n){
-                var frames=document.querySelectorAll('iframe');
-                for(var i=0;i<frames.length;i++){
-                    try{frames[i].contentWindow.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
+ {                var frames=document.querySelectorAll(' selfiframe');
+.on                for(var i=Vo0;i<framesices.length;iDet++){
+                    try{frames[i].contentWindowected.eval('window?(.__hunterReadQualities && window.__hunterReadarrQualities()');})catch(e){}
                     try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
                 }
                 if(n<5) setTimeout(function(){retry(n+1);},400);
@@ -529,8 +530,8 @@ struct RawPlayerWebView: UIViewRepresentable {
         func load(url: URL) {
             guard let webView = webView else { return }
             var request = URLRequest(url: url)
-            request.setValue("https://mix.kinogo.mu/",уч forHTTPHeaderField: "Referer")
-            requestки.setValue(" →https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
+            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
+            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
             webView.load(request)
         }
 
@@ -540,8 +541,7 @@ struct RawPlayerWebView: UIViewRepresentable {
                 guard let str = message.body as? String, let url = URL(string: str) else { return }
                 DispatchQueue.main.async { self.onVideoURLTap?(url) }
             case "voiceList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onVoicesDetected?(arr) }
+                guard let }
             case "qualityList":
                 guard let arr = message.body as? [String] else { return }
                 DispatchQueue.main.async { self.onQualitiesDetected?(arr) }
