@@ -17,7 +17,7 @@ struct ScopedWebView: UIViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v20",
+            forIdentifier: "ScopedBlock_v21",
             encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -41,12 +41,46 @@ struct ScopedWebView: UIViewRepresentable {
         'a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],'+
         'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
         '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
-
-        '.xfilter{border-bottom:none !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
-        '.xfilter > *{border-radius:10px !important;}'+
-        '.xfilter .js-xf-filter-toggle,.xfilter .xsort__button{border-radius:0 !important;}';
+        '.xfilter{border-radius:10px !important;overflow:hidden !important;}';
 
         document.head.appendChild(s);
+        }
+
+        // ---- Спейсеры: вставляем реальные <div> с высотой 8px,
+        // чтобы сдвинуть блоки, если CSS margin не работает ----
+        function makeSpacer(id, heightPx){
+        var sp=document.createElement('div');
+        sp.id=id;
+        sp.style.setProperty('height',heightPx+'px','important');
+        sp.style.setProperty('width','100%','important');
+        sp.style.setProperty('display','block','important');
+        sp.style.setProperty('background','transparent','important');
+        sp.style.setProperty('flex-shrink','0','important');
+        return sp;
+        }
+
+        function injectSpacers(){
+        // 1. Спейсеры вокруг .xfilter (блок «Фильмы / Категории»)
+        var xf=document.querySelector('.xfilter');
+        if(xf&&xf.parentNode){
+        if(!document.getElementById('__xf_spacer_top__')){
+        xf.parentNode.insertBefore(makeSpacer('__xf_spacer_top__',8),xf);
+        }
+        if(!document.getElementById('__xf_spacer_bottom__')){
+        xf.parentNode.insertBefore(makeSpacer('__xf_spacer_bottom__',8),xf.nextSibling);
+        }
+        }
+
+        // 2. Спейсеры вокруг главного каруселя (постеры «Новинки»)
+        var cr=document.querySelector('.main__header .carousel')||document.querySelector('.carousel');
+        if(cr&&cr.parentNode){
+        if(!document.getElementById('__cr_spacer_top__')){
+        cr.parentNode.insertBefore(makeSpacer('__cr_spacer_top__',8),cr);
+        }
+        if(!document.getElementById('__cr_spacer_bottom__')){
+        cr.parentNode.insertBefore(makeSpacer('__cr_spacer_bottom__',8),cr.nextSibling);
+        }
+        }
         }
 
         function fixStandalone(){
@@ -74,6 +108,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         function run(){
         try{ensureStyle();}catch(e){}
+        try{injectSpacers();}catch(e){}
         try{fixStandalone();}catch(e){}
         try{hideByImage();}catch(e){}
         }
