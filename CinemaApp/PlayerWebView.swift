@@ -16,12 +16,81 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        let script = WKUserScript(
+        // 1. JS hunter — перехват URL, чтение озвучек
+        let hunterScript = WKUserScript(
             source: PlayerJS.hunter,
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         )
-        config.userContentController.addUserScript(script)
+        config.userContentController.addUserScript(hunterScript)
+
+        // 2. JS muting — глушим все video/audio.
+        //    Главное: перехватываем HTMLMediaElement.prototype.play и
+        //    принудительно ставим muted ДО старта. Плюс периодический контроль
+        //    и MutationObserver. Инжектим в .atDocumentStart, чтобы успеть
+        //    до создания элементов в cinemar.
+        let muteJS = """
+        (function(){
+        function muteAll(){
+        try{
+        var m = document.querySelectorAll('video, audio');
+        for (var i = 0; i < m.length; i++){
+        var el = m[i];
+        try{
+        el.muted = true;
+        el.volume = 0;
+        if (!el.hasAttribute('muted')) el.setAttribute('muted','');
+        }catch(e){}
+        }
+        }catch(e){}
+        }
+
+        muteAll();
+        setInterval(muteAll, 150);
+
+        // Перехват play() — mute ставится до воспроизведения
+        try{
+        var _play = HTMLMediaElement.prototype.play;
+        HTMLMediaElement.prototype.play = function(){
+        try{ this.muted = true; this.volume = 0; }catch(e){}
+        return _play.apply(this, arguments);
+        };
+        }catch(e){}
+
+        // Перехват установки атрибута muted (чтобы сайт не мог его снять)
+        try{
+        var _setAttr = Element.prototype.setAttribute;
+        Element.prototype.setAttribute = function(name, value){
+        try{
+        if (name === 'muted' && value === null) {
+        return _setAttr.call(this, 'muted', '');
+        }
+        }catch(e){}
+        return _setAttr.apply(this, arguments);
+        };
+        }catch(e){}
+
+        // MutationObserver — mute при появлении новых элементов
+        try{
+        var obs = new MutationObserver(muteAll);
+        obs.observe(document.documentElement || document, {childList:true, subtree:true});
+        }catch(e){}
+        })();
+        """
+        let muteScriptStart = WKUserScript(
+            source: muteJS,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(muteScriptStart)
+
+        let muteScriptEnd = WKUserScript(
+            source: muteJS,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(muteScriptEnd)
+
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
 
