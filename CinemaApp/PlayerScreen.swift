@@ -200,8 +200,6 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Overlay диагностики
-
     private var debugOverlay: some View {
         ZStack {
             Color.black.opacity(0.9).ignoresSafeArea()
@@ -249,8 +247,6 @@ struct PlayerScreen: View {
         }
         return url
     }
-
-    // MARK: - Диагностика сети
 
     private func debugFetch(_ url: URL) {
         debugTitle = "Диагностика сети"
