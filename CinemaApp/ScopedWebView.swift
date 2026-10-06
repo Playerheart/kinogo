@@ -17,7 +17,7 @@ struct ScopedWebView: UIViewRepresentable {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
         WKContentRuleListStore.default().compileContentRuleList(
-            forIdentifier: "ScopedBlock_v18",
+            forIdentifier: "ScopedBlock_v19",
             encodedContentRuleList: ScopedWebView.blockRulesJSON
         ) { list, _ in
             if let list = list { config.userContentController.add(list) }
@@ -26,79 +26,39 @@ struct ScopedWebView: UIViewRepresentable {
         let js = """
         (function(){
         var HIDE_ID='__scoped_hide__';
-        var TOPNEWS_ID='__topnews_wrapper__';
-        var XF_ID='__xfilter_wrapper__';
 
         function ensureStyle(){
         if(document.getElementById(HIDE_ID))return;
         if(!document.head)return;
         var s=document.createElement('style');
         s.id=HIDE_ID;
-        s.innerHTML='a.moved-tg,.moved,.moved2,.app-download,.app-download.full-b,.yellow-banner,.luxury-banner,.usermark__panel,.video-block-strip,.xsort,.xsort--main,.js-xf-groups,.js-xf-selected,.xfilter__groups,.xsort__selected,iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}';
+        s.innerHTML=
+        'a.moved-tg,.moved,.moved2,.app-download,.app-download.full-b,.yellow-banner,.luxury-banner,.usermark__panel,.video-block-strip,'+
+        '.xsort,.xsort--main,.js-xf-groups,.js-xf-selected,.xfilter__groups,.xsort__selected,'+
+        'iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],'+
+        '[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],'+
+        '.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,'+
+        'a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],'+
+        'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
+        '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
+
+        /* ============ ВИЗУАЛЬНЫЕ ОТСТУПЫ ============ */
+        /* Карусель сверху */
+        '.main__header .carousel,.carousel{position:relative !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
+        '.carousel__items{border-radius:10px !important;overflow:hidden !important;}'+
+        /* Блок с аккордеоном категорий */
+        '.xfilter{border-bottom:none !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
+        '.xfilter > *{border-radius:10px !important;}'+
+        /* Внутренние кнопки-аккордеоны */
+        '.xfilter .js-xf-filter-toggle,.xfilter .xsort__button{border-radius:0 !important;}';
+
         document.head.appendChild(s);
-        }
-
-        function wrapTopnews(){
-        if(document.getElementById(TOPNEWS_ID))return;
-        var block=document.querySelector('.topnews');
-        if(!block)return;
-        var parent=block.parentNode;
-        if(!parent)return;
-        if(parent.id===TOPNEWS_ID)return;
-        var wrapper=document.createElement('div');
-        wrapper.id=TOPNEWS_ID;
-        wrapper.style.setProperty('padding','8px','important');
-        wrapper.style.setProperty('box-sizing','border-box','important');
-        wrapper.style.setProperty('width','100%','important');
-        wrapper.style.setProperty('overflow','hidden','important');
-        parent.insertBefore(wrapper,block);
-        wrapper.appendChild(block);
-        block.style.setProperty('border-radius','10px','important');
-        block.style.setProperty('overflow','hidden','important');
-        block.style.setProperty('margin','0','important');
-        }
-
-        function findCategoryBlock(){
-        var el=document.querySelector('.xfilter');
-        if(el)return el;
-        var all=document.querySelectorAll('div,section');
-        for(var i=0;i<all.length;i++){
-        var t=(all[i].textContent||'').slice(0,80);
-        if(t.indexOf('Фильмы / Категории')!==-1||t.indexOf('Категории')!==-1){
-        var st=window.getComputedStyle(all[i]);
-        if(st.background||st.borderRadius&&st.borderRadius!=='0px'){
-        return all[i];
-        }
-        }
-        }
-        return null;
-        }
-
-        function wrapXfilter(){
-        if(document.getElementById(XF_ID))return;
-        var el=findCategoryBlock();
-        if(!el)return;
-        var parent=el.parentNode;
-        if(!parent)return;
-        if(parent.id===XF_ID)return;
-        var wrapper=document.createElement('div');
-        wrapper.id=XF_ID;
-        wrapper.style.setProperty('padding','8px','important');
-        wrapper.style.setProperty('box-sizing','border-box','important');
-        wrapper.style.setProperty('width','100%','important');
-        wrapper.style.setProperty('overflow','hidden','important');
-        parent.insertBefore(wrapper,el);
-        wrapper.appendChild(el);
-        el.style.setProperty('border-radius','10px','important');
-        el.style.setProperty('overflow','hidden','important');
-        el.style.setProperty('margin','0','important');
         }
 
         function fixStandalone(){
         var list=document.querySelectorAll('.topnews__content, [class*=\\\"topnews__\\\"]');
         for(var i=0;i<list.length;i++){
         var el=list[i];
-        if(el.closest('#'+TOPNEWS_ID))continue;
         el.style.setProperty('padding-left','6px','important');
         el.style.setProperty('padding-right','6px','important');
         el.style.setProperty('box-sizing','border-box','important');
@@ -120,8 +80,6 @@ struct ScopedWebView: UIViewRepresentable {
 
         function run(){
         try{ensureStyle();}catch(e){}
-        try{wrapTopnews();}catch(e){}
-        try{wrapXfilter();}catch(e){}
         try{fixStandalone();}catch(e){}
         try{hideByImage();}catch(e){}
         }
