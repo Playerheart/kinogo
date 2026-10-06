@@ -42,11 +42,8 @@ struct ScopedWebView: UIViewRepresentable {
         'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
         '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
 
-        /* ============ ВИЗУАЛЬНЫЕ ОТСТУПЫ ============ */
-        /* Блок с аккордеоном категорий */
         '.xfilter{border-bottom:none !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
         '.xfilter > *{border-radius:10px !important;}'+
-        /* Внутренние кнопки-аккордеоны */
         '.xfilter .js-xf-filter-toggle,.xfilter .xsort__button{border-radius:0 !important;}';
 
         document.head.appendChild(s);
@@ -156,7 +153,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction: WKNavigationAction,
+                     for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
                 if isMovieURL(url) { onMovieTap?(url) }
