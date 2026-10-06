@@ -1,185 +1,191 @@
 import SwiftUI
-import Foundation
+import WebKit
 
-struct CaptureSheetView: View {
-    let videoURL: URL?
-    let voices: [String]
-    let currentVoice: String?
+struct ScopedWebView: UIViewRepresentable {
+    let url: URL
+    @Binding var isLoading: Bool
+    var onMovieTap: ((URL) -> Void)? = nil
 
-    var onVoiceChange: (String) -> Void
-    var onOpenInSafari: (URL) -> Void
-    var onShare: (URL) -> Void
-    var onCopy: (URL) -> Void
-    var onCancel: () -> Void
+    private static let blockRulesJSON: String = "[{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*b5c1d2e8c9982e3b965a27ac72ru7284cc.com\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl010.pro\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*cvt-s1.agl010.pro\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl007.site\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*agl008.shop\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*krasnomaga.link\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*\",\"if-domain\":[\"*temptcdn.com\"]},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*pinco.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*kysh.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*promocode.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*bahis.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*kazanmak.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*googlesyndication.*\"},\"action\":{\"type\":\"block\"}},{\"trigger\":{\"url-filter\":\".*doubleclick.*\"},\"action\":{\"type\":\"block\"}}]"
 
-    @State private var debugTitle: String = ""
-    @State private var debugMessage: String = ""
-    @State private var showDebugOverlay = false
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        if #available(iOS 10.0, *) {
+            config.mediaTypesRequiringUserActionForPlayback = []
+        }
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
-    var body: some View {
-        NavigationStack {
-            Form {
-                if let url = videoURL {
-                    Section("Ссылка на видео") {
-                        Text(url.absoluteString)
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .lineLimit(8)
-                    }
-                }
+        WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "ScopedBlock_v19",
+            encodedContentRuleList: ScopedWebView.blockRulesJSON
+        ) { list, _ in
+            if let list = list { config.userContentController.add(list) }
+        }
 
-                if !voices.isEmpty {
-                    Section("Озвучка") {
-                        Picker("Озвучка", selection: Binding(
-                            get: { currentVoice ?? voices.first ?? "" },
-                            set: { newVal in
-                                if newVal != currentVoice { onVoiceChange(newVal) }
-                            }
-                        )) {
-                            ForEach(voices, id: \.self) { v in Text(v).tag(v) }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
+        let js = """
+        (function(){
+        var HIDE_ID='__scoped_hide__';
 
-                if let url = videoURL {
-                    Section {
-                        Button {
-                            onOpenInSafari(url)
-                        } label: {
-                            Label("Открыть в Safari", systemImage: "safari")
-                        }
-                        Button {
-                            onShare(url)
-                        } label: {
-                            Label("Поделиться ссылкой", systemImage: "square.and.arrow.up")
-                        }
-                        Button {
-                            onCopy(url)
-                        } label: {
-                            Label("Скопировать ссылку", systemImage: "doc.on.doc")
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Ссылка на видео")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Отмена") { onCancel() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button {
-                        if let url = videoURL {
-                            debugFetch(url)
-                        }
-                    } label: {
-                        Image(systemName: "stethoscope")
-                    }
-                    .disabled(videoURL == nil)
-                }
-            }
-            .overlay {
-                if showDebugOverlay {
-                    debugOverlay
-                }
-            }
+        function ensureStyle(){
+        if(document.getElementById(HIDE_ID))return;
+        if(!document.head)return;
+        var s=document.createElement('style');
+        s.id=HIDE_ID;
+        s.innerHTML=
+        'a.moved-tg,.moved,.moved2,.app-download,.app-download.full-b,.yellow-banner,.luxury-banner,.usermark__panel,.video-block-strip,'+
+        '.xsort,.xsort--main,.js-xf-groups,.js-xf-selected,.xfilter__groups,.xsort__selected,'+
+        'iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],'+
+        '[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],'+
+        '.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,'+
+        'a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],'+
+        'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
+        '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}'+
+
+        /* ============ ВИЗУАЛЬНЫЕ ОТСТУПЫ ============ */
+        /* Карусель сверху */
+        '.main__header .carousel,.carousel{position:relative !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
+        '.carousel__items{border-radius:10px !important;overflow:hidden !important;}'+
+        /* Блок с аккордеоном категорий */
+        '.xfilter{border-bottom:none !important;margin:8px !important;border-radius:10px !important;overflow:hidden !important;box-sizing:border-box !important;}'+
+        '.xfilter > *{border-radius:10px !important;}'+
+        /* Внутренние кнопки-аккордеоны */
+        '.xfilter .js-xf-filter-toggle,.xfilter .xsort__button{border-radius:0 !important;}';
+
+        document.head.appendChild(s);
+        }
+
+        function fixStandalone(){
+        var list=document.querySelectorAll('.topnews__content, [class*=\\\"topnews__\\\"]');
+        for(var i=0;i<list.length;i++){
+        var el=list[i];
+        el.style.setProperty('padding-left','6px','important');
+        el.style.setProperty('padding-right','6px','important');
+        el.style.setProperty('box-sizing','border-box','important');
+        }
+        }
+
+        function hideByImage(){
+        var imgs=document.querySelectorAll('img');
+        for(var i=0;i<imgs.length;i++){
+        var img=imgs[i];
+        if(img.getAttribute('data-adblock-hidden'))continue;
+        var src=(img.src||img.getAttribute('data-src')||'').toLowerCase();
+        var isAd=src.indexOf('pinco')!==-1||src.indexOf('kysh')!==-1||src.indexOf('promocode')!==-1||src.indexOf('bahis')!==-1||src.indexOf('b5c1d2e8')!==-1||src.indexOf('agl010')!==-1||src.indexOf('agl007')!==-1||src.indexOf('agl008')!==-1;
+        if(!isAd)continue;
+        img.style.setProperty('display','none','important');
+        img.setAttribute('data-adblock-hidden','1');
+        }
+        }
+
+        function run(){
+        try{ensureStyle();}catch(e){}
+        try{fixStandalone();}catch(e){}
+        try{hideByImage();}catch(e){}
+        }
+
+        if(document.readyState==='loading'){
+        document.addEventListener('DOMContentLoaded',run);
+        }else{
+        run();
+        }
+        [50,150,400,800,1500,3000,6000,10000].forEach(function(d){setTimeout(run,d);});
+        })();
+        """
+
+        let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+        config.userContentController.addUserScript(script)
+
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.allowsBackForwardNavigationGestures = true
+        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.scrollView.backgroundColor = .black
+
+        context.coordinator.webView = webView
+        context.coordinator.onMovieTap = onMovieTap
+        context.coordinator.initialURL = url
+        webView.load(URLRequest(url: url))
+        return webView
+    }
+
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        if uiView.url != url && context.coordinator.lastLoadedURL != url {
+            context.coordinator.lastLoadedURL = url
+            context.coordinator.initialURL = url
+            context.coordinator.retryCount = 0
+            uiView.load(URLRequest(url: url))
         }
     }
 
-    private var debugOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.92).ignoresSafeArea()
-            VStack(alignment: .leading, spacing: 16) {
-                Text(debugTitle)
-                    .font(.headline)
-                    .foregroundStyle(.white)
+    func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
 
-                ScrollView {
-                    Text(debugMessage)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 420)
-                .padding(10)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+    class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        weak var webView: WKWebView?
+        let isLoading: Binding<Bool>
+        var onMovieTap: ((URL) -> Void)?
+        var lastLoadedURL: URL?
+        var initialURL: URL?
+        var retryCount = 0
+        private let maxRetries = 4
 
-                Button {
-                    showDebugOverlay = false
-                } label: {
-                    Text("Закрыть")
-                        .font(.subheadline).bold()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
-                }
+        init(isLoading: Binding<Bool>) { self.isLoading = isLoading }
+
+        private func isMovieURL(_ url: URL) -> Bool {
+            let s = url.absoluteString
+            if s.contains("/filmy/") || s.contains("/v1new/") || s.contains("/serialy/") ||
+               s.contains("/top-filmy/") || s.contains("/xfsearch/") ||
+               s.contains("/actors/") || s.contains("/directors/") ||
+               s.contains("/biografia/") ||
+               s.contains("do=search") { return false }
+            let pattern = #"/\d+-[a-z0-9\-]+\.html"#
+            return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
+            if navigationAction.navigationType == .linkActivated, isMovieURL(url) {
+                onMovieTap?(url)
+                decisionHandler(.cancel)
+                return
             }
-            .padding(20)
-            .background(Color(white: 0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .padding(24)
-        }
-    }
-
-    private func debugFetch(_ url: URL) {
-        debugTitle = "Диагностика сети"
-        debugMessage = "▶ Тестирую три URL…"
-        showDebugOverlay = true
-
-        var results: [String] = []
-        let lock = NSLock()
-        let group = DispatchGroup()
-
-        let tests: [(String, URL, Bool)] = [
-            ("google.com",        URL(string: "https://www.google.com/")!, false),
-            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!, false),
-            ("host.cinemap.cc",   url, true)
-        ]
-
-        for (name, testURL, showBody) in tests {
-            group.enter()
-            var req = URLRequest(url: testURL,
-                                 cachePolicy: .reloadIgnoringLocalCacheData,
-                                 timeoutInterval: 8)
-            for (k, v) in HLSPrepare.baseHeaders { req.setValue(v, forHTTPHeaderField: k) }
-            let start = Date()
-            URLSession.shared.dataTask(with: req) { data, response, error in
-                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
-                var line: String
-                if let err = error as NSError? {
-                    line = "\(name)  ❌  \(elapsed)с\n   \(err.domain)#\(err.code)\n   \(err.localizedDescription)"
-                } else if let http = response as? HTTPURLResponse {
-                    let mime = http.mimeType ?? "?"
-                    let len = data?.count ?? 0
-                    var block = "\(name)  ✅  \(elapsed)с\n   HTTP \(http.statusCode)  \(len) б  \(mime)"
-                    if showBody, let d = data {
-                        let preview = String(data: d.prefix(400), encoding: .utf8)
-                            ?? "<бинарные данные>"
-                        block += "\n\n   ПЕРВЫЕ 400 СИМВОЛОВ:\n\(preview)"
-                    }
-                    line = block
-                } else {
-                    line = "\(name)  ?  \(elapsed)с  нет ответа"
-                }
-                lock.lock()
-                results.append(line)
-                let snapshot = results.sorted().joined(separator: "\n\n")
-                lock.unlock()
-                DispatchQueue.main.async {
-                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)"
-                }
-                group.leave()
-            }.resume()
+            decisionHandler(.allow)
         }
 
-        group.notify(queue: .main) {
-            self.debugMessage = "▶ Завершено: 3 / 3\n\n" + results.sorted().joined(separator: "\n\n")
+        func webView(_ webView: WKWebView,
+                     createWebViewWith configuration: WKWebViewConfiguration,
+                     for navigationAction: WKNavigationAction,
+                     windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil, let url = navigationAction.request.url {
+                if isMovieURL(url) { onMovieTap?(url) }
+                else { webView.load(navigationAction.request) }
+            }
+            return nil
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            DispatchQueue.main.async { self.isLoading.wrappedValue = true }
+        }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            retryCount = 0
+            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+        }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            DispatchQueue.main.async { self.isLoading.wrappedValue = false }
+            guard let u = initialURL, retryCount < maxRetries else { return }
+            retryCount += 1
+            let delay = Double(retryCount) * 1.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                webView.load(URLRequest(url: u))
+            }
         }
     }
 }
