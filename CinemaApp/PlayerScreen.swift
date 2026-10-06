@@ -11,8 +11,6 @@ struct PlayerScreen: View {
 
     @State private var showVoicePicker = false
     @State private var showQualityPicker = false
-    @State private var voicePromptShown = false
-    @State private var qualityPromptShown = false
 
     @State private var currentVoice: String? = nil
     @State private var currentQuality: String? = nil
@@ -50,23 +48,11 @@ struct PlayerScreen: View {
                             if list.isEmpty { return }
                             voices = list
                             if currentVoice == nil { currentVoice = list.first }
-                            if !voicePromptShown {
-                                voicePromptShown = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    showVoicePicker = true
-                                }
-                            }
                         },
                         onQualitiesDetected: { list in
                             if list.isEmpty { return }
                             qualities = list
                             if currentQuality == nil { currentQuality = list.first }
-                            if !qualityPromptShown {
-                                qualityPromptShown = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                    showQualityPicker = true
-                                }
-                            }
                         },
                         pendingVoice: $pendingVoice,
                         pendingQuality: $pendingQuality,
@@ -116,8 +102,6 @@ struct PlayerScreen: View {
                     Button {
                         if let url = URL(string: player.url) {
                             isLoading = true
-                            voicePromptShown = false
-                            qualityPromptShown = false
                             NotificationCenter.default.post(name: .reloadPlayer, object: url)
                         }
                     } label: {
@@ -133,15 +117,10 @@ struct PlayerScreen: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
                             qualities = []
                             cmdReadQualities &+= 1
-                            showQualityPicker = true
                         }
                     }
                 }
-                Button("Пропустить", role: .cancel) {
-                    qualities = []
-                    cmdReadQualities &+= 1
-                    showQualityPicker = true
-                }
+                Button("Отмена", role: .cancel) {}
             }
             .confirmationDialog("Выберите качество", isPresented: $showQualityPicker, titleVisibility: .visible) {
                 if qualities.isEmpty {
@@ -185,7 +164,7 @@ struct PlayerScreen: View {
                         showNativePlayer = true
                     },
                     onDownload: { url in
-                        showCaptureSheet = false
+                        showCaptureSheetбор = false
                         startDownload(url)
                     },
                     onCancel: { showCaptureSheet = false }
@@ -304,7 +283,7 @@ struct CaptureSheetView: View {
                             Label("Играть в нативном плеере", systemImage: "play.fill")
                         }
                         Button {
-                            onDownload(url)
+                            onDownload оз(url)
                         } label: {
                             Label("Скачать файл", systemImage: "arrow.down.circle")
                         }
@@ -350,7 +329,7 @@ struct RawPlayerWebView: UIViewRepresentable {
             if (!isCinemar || window.__hunterInstalled) return;
             window.__hunterInstalled = true;
 
-            function reportVideo(u){
+            functionв reportVideo(u){
                 if(!u) return;
                 var l=u.toLowerCase();
                 if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
@@ -550,8 +529,8 @@ struct RawPlayerWebView: UIViewRepresentable {
         func load(url: URL) {
             guard let webView = webView else { return }
             var request = URLRequest(url: url)
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
+            request.setValue("https://mix.kinogo.mu/",уч forHTTPHeaderField: "Referer")
+            requestки.setValue(" →https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
             webView.load(request)
         }
 
@@ -586,7 +565,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
+                     forNavigationAction navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
