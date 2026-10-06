@@ -15,7 +15,7 @@ enum HLSPrepare {
     ]
 
     static func prepare(url: URL, headers: [String: String], completion: @escaping (Result) -> Void) {
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
 
         URLSession.shared.dataTask(with: req) { data, _, _ in
@@ -50,14 +50,17 @@ enum HLSPrepare {
             if l.hasPrefix("#") {
                 l = l.replacingOccurrences(of: "URI=\"https://", with: "URI=\"cinemap-https://")
                 l = l.replacingOccurrences(of: "URI=\"http://",  with: "URI=\"cinemap-http://")
+                lines[i] = l
+                continue
+            }
+            if l.hasPrefix("cinemap-") {
+                // уже переписан
             } else if l.hasPrefix("https://") {
                 l = "cinemap-" + l
             } else if l.hasPrefix("http://") {
                 l = "cinemap-" + l
-            } else {
-                if let abs = URL(string: original, relativeTo: baseURL)?.absoluteURL {
-                    l = "cinemap-" + abs.absoluteString
-                }
+            } else if let abs = URL(string: original, relativeTo: baseURL)?.absoluteURL {
+                l = "cinemap-" + abs.absoluteString
             }
             lines[i] = l
         }
@@ -82,7 +85,7 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         comps?.scheme = originalScheme
         guard let realURL = comps?.url else { return false }
 
-        var request = URLRequest(url: realURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        var request = URLRequest(url: realURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
 
         let task = URLSession.shared.dataTask(with: request) { data, _, error in
@@ -97,16 +100,16 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
 
             let urlString = realURL.absoluteString.lowercased()
             var mime = "application/octet-stream"
-            if urlString.contains(".m3u8") || urlString.contains("playlist") {
+            if urlString.contains(".m3u8") || urlString.contains("manifest") {
                 mime = "application/vnd.apple.mpegurl"
-            } else if urlString.contains(".ts") || urlString.contains(".mp4:hls") {
+            } else if urlString.contains(".ts") {
                 mime = "video/mp2t"
             } else if urlString.contains(".mp4") {
                 mime = "video/mp4"
             }
 
             if let str = String(data: data, encoding: .utf8), str.contains("#EXTM3U") {
-                let rewritten = Self.rewritePlaylist(str)
+                let rewritten = Self.rewritePlaylist(str, baseURL: realURL)
                 if let d = rewritten.data(using: .utf8) { data = d }
                 mime = "application/vnd.apple.mpegurl"
             }
@@ -124,27 +127,35 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         return true
     }
 
-    private static func rewritePlaylist(_ s: String) -> String {
+    private static func rewritePlaylist(_ s: String, baseURL: URL) -> String {
         var lines = s.components(separatedBy: "\n")
         for i in 0..<lines.count {
-            let l = lines[i]
-            var out = l
+            let original = lines[i]
+            if original.isEmpty { continue }
+            var l = original
             if l.hasPrefix("#") {
-                out = l.replacingOccurrences(of: "URI=\"https://", with: "URI=\"cinemap-https://")
-                out = out.replacingOccurrences(of: "URI=\"http://",  with: "URI=\"cinemap-http://")
-            } else if l.hasPrefix("https://") {
-                out = "cinemap-" + l
-            } else if l.hasPrefix("http://") {
-                out = "cinemap-" + l
+                l = l.replacingOccurrences(of: "URI=\"https://", with: "URI=\"cinemap-https://")
+                l = l.replacingOccurrences(of: "URI=\"http://",  with: "URI=\"cinemap-http://")
+                lines[i] = l
+                continue
             }
-            lines[i] = out
+            if l.hasPrefix("cinemap-") {
+                // уже переписан
+            } else if l.hasPrefix("https://") {
+                l = "cinemap-" + l
+            } else if l.hasPrefix("http://") {
+                l = "cinemap-" + l
+            } else if let abs = URL(string: original, relativeTo: baseURL)?.absoluteURL {
+                l = "cinemap-" + abs.absoluteString
+            }
+            lines[i] = l
         }
         return lines.joined(separator: "\n")
     }
 }
 
 enum Downloader {
-    enum DL: Error { case http(Int), emptyPlaylist, parseFailed, timeout }
+    enum DL: Error { case http(Int), emptyPlaylist, parseFailed }
 
     static func downloadHLS(url: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
@@ -211,7 +222,7 @@ enum Downloader {
     }
 
     private static func fetchText(url: URL, headers: [String: String], completion: @escaping (Result<String, Error>) -> Void) {
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         URLSession.shared.dataTask(with: req) { data, response, error in
             if let error = error { completion(.failure(error)); return }
@@ -227,7 +238,7 @@ enum Downloader {
     }
 
     private static func fetchBinary(url: URL, headers: [String: String], completion: @escaping (Result<URL, Error>) -> Void) {
-        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         URLSession.shared.downloadTask(with: req) { local, response, error in
             if let error = error { completion(.failure(error)); return }
