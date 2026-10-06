@@ -14,6 +14,9 @@ struct PlayerScreen: View {
     @State private var pendingQuality: String? = nil
     @State private var cmdReadQualities = 0
 
+    @State private var voicePromptShown = false
+    @State private var qualityPromptShown = false
+
     @State private var capturedVideoURL: URL?
     @State private var showCaptureAlert = false
 
@@ -40,10 +43,25 @@ struct PlayerScreen: View {
                             showCaptureAlert = true
                         },
                         onVoicesDetected: { list in
-                            if !list.isEmpty { voices = list }
+                            if list.isEmpty { return }
+                            voices = list
+                            // Первый автоматический шаг: показываем выбор озвучки один раз
+                            if !voicePromptShown {
+                                voicePromptShown = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showVoicePicker = true
+                                }
+                            }
                         },
                         onQualitiesDetected: { list in
-                            if !list.isEmpty { qualities = list }
+                            if list.isEmpty { return }
+                            qualities = list
+                            if !qualityPromptShown {
+                                qualityPromptShown = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showQualityPicker = true
+                                }
+                            }
                         },
                         pendingVoice: $pendingVoice,
                         pendingQuality: $pendingQuality,
@@ -97,6 +115,8 @@ struct PlayerScreen: View {
                     Button {
                         if let url = URL(string: player.url) {
                             isLoading = true
+                            voicePromptShown = false
+                            qualityPromptShown = false
                             NotificationCenter.default.post(name: .reloadPlayer, object: url)
                         }
                     } label: {
@@ -104,18 +124,34 @@ struct PlayerScreen: View {
                     }
                 }
             }
-            .confirmationDialog("Озвучка", isPresented: $showVoicePicker, titleVisibility: .visible) {
+            .confirmationDialog("Выберите озвучку", isPresented: $showVoicePicker, titleVisibility: .visible) {
                 ForEach(voices, id: \.self) { v in
-                    Button(v) { pendingVoice = v }
+                    Button(v) {
+                        pendingVoice = v
+                        // После переключения озвучки запускаем следующий шаг — чтение качеств
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
+                            qualities = []
+                            cmdReadQualities &+= 1
+                            showQualityPicker = true
+                        }
+                    }
                 }
-                Button("Отмена", role: .cancel) {}
+                Button("Пропустить", role: .cancel) {
+                    // Пользователь не хочет выбирать — открываем качества сразу
+                    qualities = []
+                    cmdReadQualities &+= 1
+                    showQualityPicker = true
+                }
             }
-            .confirmationDialog("Качество", isPresented: $showQualityPicker, titleVisibility: .visible) {
+            .confirmationDialog("Выберите качество", isPresented: $showQualityPicker, titleVisibility: .visible) {
                 if qualities.isEmpty {
                     Text("Сканируем доступные качества…")
                 } else {
                     ForEach(qualities, id: \.self) { q in
-                        Button(q) { pendingQuality = q }
+                        Button(q) {
+                            pendingQuality = q
+                            // Ничего больше не делаем — URL перехватится автоматически и появится меню
+                        }
                     }
                 }
                 Button("Отмена", role: .cancel) {}
@@ -201,6 +237,9 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
+        // JS больше НЕ кликает «Скачать» и «720p» автоматически.
+        // Он только читает список озвучек, кликает по «Скачать» когда попросят,
+        // собирает список качеств и кликает по выбранному.
         let hunterJS = """
         (function(){
             var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
@@ -230,12 +269,16 @@ struct RawPlayerWebView: UIViewRepresentable {
                 }catch(e){}
             }
 
-            window.__hunterReadQualities = function(){
+            function clickDownloadButton(){
                 var dl=document.getElementById('player_control_pl-download');
                 if(dl){
                     try{dl.click();}catch(e){}
                     try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
                 }
+            }
+
+            function readQualities(){
+                clickDownloadButton();
                 setTimeout(function(){
                     var map={};
                     var all=document.querySelectorAll('div,button,li,a,span');
@@ -251,14 +294,10 @@ struct RawPlayerWebView: UIViewRepresentable {
                     var arr=Object.keys(map);
                     try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
                 },1200);
-            };
+            }
 
-            window.__hunterSelectQuality = function(text){
-                var dl=document.getElementById('player_control_pl-download');
-                if(dl){
-                    try{dl.click();}catch(e){}
-                    try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
-                }
+            function selectQuality(text){
+                clickDownloadButton();
                 setTimeout(function(){
                     var all=document.querySelectorAll('div,button,li,a,span');
                     var best=null;
@@ -274,8 +313,11 @@ struct RawPlayerWebView: UIViewRepresentable {
                         try{best.click();}catch(e){}
                         try{best.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
                     }
-                },600);
-            };
+                },700);
+            }
+
+            window.__hunterReadQualities = readQualities;
+            window.__hunterSelectQuality = selectQuality;
 
             window.addEventListener('message',function(e){
                 if(!e.data||!e.data.type) return;
@@ -288,9 +330,14 @@ struct RawPlayerWebView: UIViewRepresentable {
                             if((all[i].textContent||'').trim()===e.data.text){all[i].click();return;}
                         }
                     },250);
+                } else if(e.data.type==='readQualities'){
+                    readQualities();
+                } else if(e.data.type==='selectQuality'){
+                    selectQuality(e.data.text);
                 }
             });
 
+            // Только чтение озвучек, никаких автокликов download/quality
             setTimeout(readVoices,2000);
             setTimeout(readVoices,5000);
             setTimeout(readVoices,9000);
@@ -320,6 +367,7 @@ struct RawPlayerWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        // Выбор озвучки
         if let voice = pendingVoice, !voice.isEmpty {
             let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
                            .replacingOccurrences(of: "'", with: "\\'")
@@ -336,6 +384,7 @@ struct RawPlayerWebView: UIViewRepresentable {
             DispatchQueue.main.async { pendingVoice = nil }
         }
 
+        // Команда чтения качеств
         if cmdReadQualities > context.coordinator.lastCmdRead {
             context.coordinator.lastCmdRead = cmdReadQualities
             let js = """
@@ -351,6 +400,7 @@ struct RawPlayerWebView: UIViewRepresentable {
             uiView.evaluateJavaScript(js, completionHandler: nil)
         }
 
+        // Выбор качества
         if let q = pendingQuality, !q.isEmpty {
             let esc = q.replacingOccurrences(of: "\\", with: "\\\\")
                        .replacingOccurrences(of: "'", with: "\\'")
@@ -359,6 +409,7 @@ struct RawPlayerWebView: UIViewRepresentable {
                 var frames=document.querySelectorAll('iframe');
                 for(var i=0;i<frames.length;i++){
                     try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
+                    try{frames[i].contentWindow.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
                 }
                 if(n<5) setTimeout(function(){retry(n+1);},400);
             })(0);
