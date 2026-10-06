@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AVFoundation
 
 struct PlayerScreen: View {
     let player: Player
@@ -204,8 +205,20 @@ struct PlayerScreen: View {
     }
 
     private func startDownload(_ url: URL) {
+        let path = url.path.lowercased()
+        if path.hasSuffix(".m3u8") || path.contains(".m3u8") || path.contains("hls") {
+            downloadHLS(url)
+        } else {
+            downloadDirect(url)
+        }
+    }
+
+    private func downloadDirect(_ url: URL) {
         downloadingURL = url
-        URLSession.shared.downloadTask(with: url) { localURL, _, _ in
+        var req = URLRequest(url: url)
+        req.setValue("https://cinemar.cc/", forHTTPHeaderField: "Referer")
+        req.setValue("https://cinemar.cc", forHTTPHeaderField: "Origin")
+        URLSession.shared.downloadTask(with: req) { localURL, _, _ in
             DispatchQueue.main.async { downloadingURL = nil }
             guard let localURL = localURL else { return }
             let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -218,6 +231,34 @@ struct PlayerScreen: View {
                 showShareSheet = true
             }
         }.resume()
+    }
+
+    private func downloadHLS(_ url: URL) {
+        downloadingURL = url
+        let headers: [String: Any] = [
+            "Referer": "https://cinemar.cc/",
+            "Origin": "https://cinemar.cc",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        ]
+        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
+        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+            downloadingURL = nil
+            return
+        }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dest = docs.appendingPathComponent("video.mp4")
+        try? FileManager.default.removeItem(at: dest)
+        export.outputURL = dest
+        export.outputFileType = .mp4
+        export.exportAsynchronously {
+            DispatchQueue.main.async {
+                self.downloadingURL = nil
+                if export.status == .completed {
+                    self.downloadedFile = dest
+                    self.showShareSheet = true
+                }
+            }
+        }
     }
 }
 
@@ -325,18 +366,41 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         let hunterJS = """
         (function(){
-        var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
-        if (!isCinemar || window.__hunterInstalled) return;
+        if (window.__hunterInstalled) return;
         window.__hunterInstalled = true;
         function reportVideo(u){
         if(!u) return;
-        var l=u.toLowerCase();
+        var l=String(u).toLowerCase();
         if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
-        try{window.webkit.messageHandlers.videoURL.postMessage(u);}catch(e){}
+        try{window.webkit.messageHandlers.videoURL.postMessage(String(u));}catch(e){}
         }
         try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
         try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
         try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
+        try{var _s=document.createElement.bind(document);}catch(e){}
+        try{
+        var _ob=window.Object;
+        if(!window.__hunterMediaHooked){
+        window.__hunterMediaHooked=true;
+        try{
+        var _srcDesc=Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype,'src');
+        if(_srcDesc&&_srcDesc.set){
+        Object.defineProperty(HTMLMediaElement.prototype,'src',{
+        set:function(v){try{reportVideo(v);}catch(e){}return _srcDesc.set.call(this,v);},
+        get:_srcDesc.get,
+        configurable:true
+        });
+        }
+        }catch(e){}
+        try{
+        var _origSetAttribute=Element.prototype.setAttribute;
+        Element.prototype.setAttribute=function(n,v){
+        try{if((n==='src'||n==='data-src')&&v)reportVideo(v);}catch(e){}
+        return _origSetAttribute.apply(this,arguments);
+        };
+        }catch(e){}
+        }
+        }catch(e){}
         function readVoices(){
         try{
         var btns=document.querySelectorAll('.playlist-dropdown button');
@@ -447,11 +511,15 @@ struct RawPlayerWebView: UIViewRepresentable {
                            .replacingOccurrences(of: "'", with: "\\'")
             let js = """
             (function retry(n){
+            function broadcast(){
+            try{window.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
             var frames=document.querySelectorAll('iframe');
             for(var i=0;i<frames.length;i++){
             try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
             }
-            if(n<10) setTimeout(function(){retry(n+1);},300);
+            }
+            broadcast();
+            if(n<12) setTimeout(function(){retry(n+1);},300);
             })(0);
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
@@ -462,12 +530,17 @@ struct RawPlayerWebView: UIViewRepresentable {
             context.coordinator.lastCmdRead = cmdReadQualities
             let js = """
             (function retry(n){
+            function broadcast(){
+            try{window.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
+            try{window.postMessage({type:'readQualities'},'*');}catch(e){}
             var frames=document.querySelectorAll('iframe');
             for(var i=0;i<frames.length;i++){
             try{frames[i].contentWindow.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
             try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
             }
-            if(n<5) setTimeout(function(){retry(n+1);},400);
+            }
+            broadcast();
+            if(n<6) setTimeout(function(){retry(n+1);},400);
             })(0);
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
@@ -478,12 +551,17 @@ struct RawPlayerWebView: UIViewRepresentable {
                        .replacingOccurrences(of: "'", with: "\\'")
             let js = """
             (function retry(n){
+            function broadcast(){
+            try{window.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
+            try{window.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
             var frames=document.querySelectorAll('iframe');
             for(var i=0;i<frames.length;i++){
             try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
             try{frames[i].contentWindow.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
             }
-            if(n<5) setTimeout(function(){retry(n+1);},400);
+            }
+            broadcast();
+            if(n<6) setTimeout(function(){retry(n+1);},400);
             })(0);
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
