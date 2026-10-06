@@ -8,17 +8,21 @@ struct PlayerScreen: View {
 
     @State private var voices: [String] = []
     @State private var qualities: [String] = []
+
     @State private var showVoicePicker = false
     @State private var showQualityPicker = false
+    @State private var voicePromptShown = false
+    @State private var qualityPromptShown = false
+
+    @State private var currentVoice: String? = nil
+    @State private var currentQuality: String? = nil
+
     @State private var pendingVoice: String? = nil
     @State private var pendingQuality: String? = nil
     @State private var cmdReadQualities = 0
 
-    @State private var voicePromptShown = false
-    @State private var qualityPromptShown = false
-
     @State private var capturedVideoURL: URL?
-    @State private var showCaptureAlert = false
+    @State private var showCaptureSheet = false
 
     @State private var showNativePlayer = false
     @State private var nativePlayerURL: URL?
@@ -40,12 +44,12 @@ struct PlayerScreen: View {
                         isLoading: $isLoading,
                         onVideoURLTap: { videoURL in
                             capturedVideoURL = videoURL
-                            showCaptureAlert = true
+                            showCaptureSheet = true
                         },
                         onVoicesDetected: { list in
                             if list.isEmpty { return }
                             voices = list
-                            // Первый автоматический шаг: показываем выбор озвучки один раз
+                            if currentVoice == nil { currentVoice = list.first }
                             if !voicePromptShown {
                                 voicePromptShown = true
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -56,6 +60,7 @@ struct PlayerScreen: View {
                         onQualitiesDetected: { list in
                             if list.isEmpty { return }
                             qualities = list
+                            if currentQuality == nil { currentQuality = list.first }
                             if !qualityPromptShown {
                                 qualityPromptShown = true
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -94,9 +99,7 @@ struct PlayerScreen: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if !voices.isEmpty {
-                        Button {
-                            showVoicePicker = true
-                        } label: {
+                        Button { showVoicePicker = true } label: {
                             Image(systemName: "waveform")
                         }
                     }
@@ -107,9 +110,7 @@ struct PlayerScreen: View {
                     } label: {
                         Image(systemName: "tv")
                     }
-                    Button {
-                        showManualURLInput = true
-                    } label: {
+                    Button { showManualURLInput = true } label: {
                         Image(systemName: "link")
                     }
                     Button {
@@ -127,8 +128,8 @@ struct PlayerScreen: View {
             .confirmationDialog("Выберите озвучку", isPresented: $showVoicePicker, titleVisibility: .visible) {
                 ForEach(voices, id: \.self) { v in
                     Button(v) {
+                        currentVoice = v
                         pendingVoice = v
-                        // После переключения озвучки запускаем следующий шаг — чтение качеств
                         DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
                             qualities = []
                             cmdReadQualities &+= 1
@@ -137,7 +138,6 @@ struct PlayerScreen: View {
                     }
                 }
                 Button("Пропустить", role: .cancel) {
-                    // Пользователь не хочет выбирать — открываем качества сразу
                     qualities = []
                     cmdReadQualities &+= 1
                     showQualityPicker = true
@@ -149,22 +149,49 @@ struct PlayerScreen: View {
                 } else {
                     ForEach(qualities, id: \.self) { q in
                         Button(q) {
+                            currentQuality = q
                             pendingQuality = q
-                            // Ничего больше не делаем — URL перехватится автоматически и появится меню
                         }
                     }
                 }
                 Button("Отмена", role: .cancel) {}
             }
-            .alert("Ссылка на видео", isPresented: $showCaptureAlert, presenting: capturedVideoURL) { url in
-                Button("Играть в нативном плеере") {
-                    nativePlayerURL = url
-                    showNativePlayer = true
-                }
-                Button("Скачать файл") { startDownload(url) }
-                Button("Отмена", role: .cancel) {}
-            } message: { url in
-                Text(url.absoluteString)
+            .sheet(isPresented: $showCaptureSheet) {
+                CaptureSheetView(
+                    videoURL: capturedVideoURL,
+                    voices: voices,
+                    qualities: qualities,
+                    currentVoice: currentVoice,
+                    currentQuality: currentQuality,
+                    onVoiceChange: { v in
+                        currentVoice = v
+                        pendingVoice = v
+                        capturedVideoURL = nil
+                        showCaptureSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            qualities = []
+                            cmdReadQualities &+= 1
+                        }
+                    },
+                    onQualityChange: { q in
+                        currentQuality = q
+                        pendingQuality = q
+                        capturedVideoURL = nil
+                        showCaptureSheet = false
+                    },
+                    onPlay: { url in
+                        showCaptureSheet = false
+                        nativePlayerURL = url
+                        showNativePlayer = true
+                    },
+                    onDownload: { url in
+                        showCaptureSheet = false
+                        startDownload(url)
+                    },
+                    onCancel: { showCaptureSheet = false }
+                )
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             .fullScreenCover(isPresented: $showNativePlayer) {
                 if let url = nativePlayerURL {
@@ -215,9 +242,93 @@ struct PlayerScreen: View {
     }
 }
 
+// MARK: - Sheet
+
+struct CaptureSheetView: View {
+    let videoURL: URL?
+    let voices: [String]
+    let qualities: [String]
+    let currentVoice: String?
+    let currentQuality: String?
+
+    var onVoiceChange: (String) -> Void
+    var onQualityChange: (String) -> Void
+    var onPlay: (URL) -> Void
+    var onDownload: (URL) -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let url = videoURL {
+                    Section("Ссылка на видео") {
+                        Text(url.absoluteString)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .lineLimit(8)
+                    }
+                }
+
+                if !voices.isEmpty {
+                    Section("Озвучка") {
+                        Picker("Озвучка", selection: Binding(
+                            get: { currentVoice ?? voices.first ?? "" },
+                            set: { newVal in
+                                if newVal != currentVoice { onVoiceChange(newVal) }
+                            }
+                        )) {
+                            ForEach(voices, id: \.self) { v in Text(v).tag(v) }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+
+                if !qualities.isEmpty {
+                    Section("Качество") {
+                        Picker("Качество", selection: Binding(
+                            get: { currentQuality ?? qualities.first ?? "" },
+                            set: { newVal in
+                                if newVal != currentQuality { onQualityChange(newVal) }
+                            }
+                        )) {
+                            ForEach(qualities, id: \.self) { q in Text(q).tag(q) }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
+
+                if let url = videoURL {
+                    Section {
+                        Button {
+                            onPlay(url)
+                        } label: {
+                            Label("Играть в нативном плеере", systemImage: "play.fill")
+                        }
+                        Button {
+                            onDownload(url)
+                        } label: {
+                            Label("Скачать файл", systemImage: "arrow.down.circle")
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Ссылка на видео")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Отмена") { onCancel() }
+                }
+            }
+        }
+    }
+}
+
 extension Notification.Name {
     static let reloadPlayer = Notification.Name("reloadPlayer")
 }
+
+// MARK: - WKWebView
 
 struct RawPlayerWebView: UIViewRepresentable {
     let url: URL
@@ -237,9 +348,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        // JS больше НЕ кликает «Скачать» и «720p» автоматически.
-        // Он только читает список озвучек, кликает по «Скачать» когда попросят,
-        // собирает список качеств и кликает по выбранному.
         let hunterJS = """
         (function(){
             var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
@@ -262,7 +370,7 @@ struct RawPlayerWebView: UIViewRepresentable {
                     var btns=document.querySelectorAll('.playlist-dropdown button');
                     var arr=[];
                     for(var i=0;i<btns.length;i++){
-                        var t=(btns[i].textContent||'').trim();
+                        var t=(btns[i].textContent||'').replace(/\\s+/g,' ').trim();
                         if(t&&arr.indexOf(t)===-1) arr.push(t);
                     }
                     if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
@@ -281,17 +389,19 @@ struct RawPlayerWebView: UIViewRepresentable {
                 clickDownloadButton();
                 setTimeout(function(){
                     var map={};
-                    var all=document.querySelectorAll('div,button,li,a,span');
+                    var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
                     for(var i=0;i<all.length;i++){
                         var el=all[i];
                         var r=el.getBoundingClientRect();
                         if(r.width<20||r.height<10) continue;
-                        var t=(el.textContent||'').trim();
+                        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
                         if(t.length<3||t.length>30) continue;
-                        if(!/^\\d{3,4}p(\\s|$)/i.test(t)) continue;
+                        if(!/^\\d{3,4}p(\\s|HD|$)/i.test(t)) continue;
                         if(!map[t]||el.children.length<map[t].children.length) map[t]=el;
                     }
-                    var arr=Object.keys(map);
+                    var arr=Object.keys(map).sort(function(a,b){
+                        return (parseInt(b,10)||0)-(parseInt(a,10)||0);
+                    });
                     try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
                 },1200);
             }
@@ -299,14 +409,14 @@ struct RawPlayerWebView: UIViewRepresentable {
             function selectQuality(text){
                 clickDownloadButton();
                 setTimeout(function(){
-                    var all=document.querySelectorAll('div,button,li,a,span');
+                    var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
                     var best=null;
                     for(var i=0;i<all.length;i++){
                         var el=all[i];
                         var r=el.getBoundingClientRect();
                         if(r.width<20||r.height<10) continue;
-                        var t=(el.textContent||'').trim();
-                        if(t!==text) continue;
+                        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
+                        if(t.indexOf(text)!==0) continue;
                         if(!best||el.children.length<best.children.length) best=el;
                     }
                     if(best){
@@ -327,7 +437,7 @@ struct RawPlayerWebView: UIViewRepresentable {
                     setTimeout(function(){
                         var all=document.querySelectorAll('.playlist-dropdown button');
                         for(var i=0;i<all.length;i++){
-                            if((all[i].textContent||'').trim()===e.data.text){all[i].click();return;}
+                            if((all[i].textContent||'').replace(/\\s+/g,' ').trim()===e.data.text){all[i].click();return;}
                         }
                     },250);
                 } else if(e.data.type==='readQualities'){
@@ -337,7 +447,6 @@ struct RawPlayerWebView: UIViewRepresentable {
                 }
             });
 
-            // Только чтение озвучек, никаких автокликов download/quality
             setTimeout(readVoices,2000);
             setTimeout(readVoices,5000);
             setTimeout(readVoices,9000);
@@ -367,7 +476,6 @@ struct RawPlayerWebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // Выбор озвучки
         if let voice = pendingVoice, !voice.isEmpty {
             let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
                            .replacingOccurrences(of: "'", with: "\\'")
@@ -384,7 +492,6 @@ struct RawPlayerWebView: UIViewRepresentable {
             DispatchQueue.main.async { pendingVoice = nil }
         }
 
-        // Команда чтения качеств
         if cmdReadQualities > context.coordinator.lastCmdRead {
             context.coordinator.lastCmdRead = cmdReadQualities
             let js = """
@@ -400,7 +507,6 @@ struct RawPlayerWebView: UIViewRepresentable {
             uiView.evaluateJavaScript(js, completionHandler: nil)
         }
 
-        // Выбор качества
         if let q = pendingQuality, !q.isEmpty {
             let esc = q.replacingOccurrences(of: "\\", with: "\\\\")
                        .replacingOccurrences(of: "'", with: "\\'")
@@ -472,10 +578,10 @@ struct RawPlayerWebView: UIViewRepresentable {
             let s = url.absoluteString.lowercased()
             return s.contains(".mp4") || s.contains(".m3u8") ||
                    s.contains(".mkv") || s.contains(".webm") ||
-                   s.contains(".mov") || s.contains(".m4v")
+                   s.contains(".mov") ||0 s.contains(".m4v")
         }
 
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+        funcp Full webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
             if isVideoURL(url) { onVideoURLTap?(url); decisionHandler(.cancel); return }
@@ -484,7 +590,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
+                     forNavigationAction navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
