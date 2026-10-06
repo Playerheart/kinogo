@@ -19,10 +19,14 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
+    @State private var showShareSheetForURL = false
+    @State private var urlToShare: URL?
+
+    @State private var toastText: String? = nil
+
     @State private var debugTitle: String = ""
     @State private var debugMessage: String = ""
     @State private var showDebugOverlay = false
-    @State private var debugTick = 0
 
     var body: some View {
         NavigationStack {
@@ -55,6 +59,19 @@ struct PlayerScreen: View {
                 }
                 if isLoading {
                     ProgressView().scaleEffect(1.6).tint(.white)
+                }
+                if let toast = toastText {
+                    VStack {
+                        Spacer()
+                        Text(toast)
+                            .font(.subheadline).bold()
+                            .padding(.horizontal, 16).padding(.vertical, 10)
+                            .background(Color.black.opacity(0.85))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                            .padding(.bottom, 60)
+                    }
+                    .transition(.opacity)
                 }
             }
             .navigationTitle(player.name)
@@ -109,26 +126,41 @@ struct PlayerScreen: View {
                         capturedVideoURL = nil
                         showCaptureSheet = false
                     },
-                    onPlay: { url in
+                    onOpenInSafari: { url in
                         showCaptureSheet = false
-                        openInSafari(url)
+                        UIPasteboard.general.string = url.absoluteString
+                        showToast("Ссылка скопирована")
+                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     },
-                    onDownload: { url in
+                    onShare: { url in
                         showCaptureSheet = false
-                        openInSafari(url)
+                        urlToShare = url
+                        showShareSheetForURL = true
+                    },
+                    onCopy: { url in
+                        showCaptureSheet = false
+                        UIPasteboard.general.string = url.absoluteString
+                        showToast("Ссылка скопирована")
                     },
                     onCancel: { showCaptureSheet = false }
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
+            .sheet(isPresented: $showShareSheetForURL) {
+                if let url = urlToShare {
+                    ShareSheet(activityItems: [url])
+                }
+            }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
                 TextField("https://… .mp4 или .m3u8", text: $manualURLText)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("Открыть в Safari") {
-                    if let url = URL(string: manualURLText.trimmingCharacters(in: .whitespaces)) {
-                        openInSafari(PlayerScreen.normalizeVideoURL(url))
+                Button("Скопировать") {
+                    let trimmed = manualURLText.trimmingCharacters(in: .whitespaces)
+                    if let url = URL(string: trimmed) {
+                        UIPasteboard.general.string = PlayerScreen.normalizeVideoURL(url).absoluteString
+                        showToast("Ссылка скопирована")
                     }
                     manualURLText = ""
                 }
@@ -141,6 +173,13 @@ struct PlayerScreen: View {
             if showDebugOverlay {
                 debugOverlay
             }
+        }
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation { toastText = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation { self.toastText = nil }
         }
     }
 
@@ -190,10 +229,6 @@ struct PlayerScreen: View {
             if let u = URL(string: trimmed) { return u }
         }
         return url
-    }
-
-    private func openInSafari(_ url: URL) {
-        UIApplication.shared.open(url, options: [:], completionHandler: nil)
     }
 
     private func debugFetch(_ url: URL) {
