@@ -244,7 +244,7 @@ struct PlayerScreen: View {
     static func normalizeVideoURL(_ url: URL) -> URL {
         let s = url.absoluteString
         if let r = s.range(of: ":hls:") {
-            let trimmed = String(s[..:r.lowerBound])
+            let trimmed = String(s[..<r.lowerBound])
             if let u = URL(string: trimmed) { return u }
         }
         return url
@@ -258,7 +258,6 @@ struct PlayerScreen: View {
         showDebugOverlay = true
         debugTick = 0
 
-        // Живой счётчик секунд, чтобы было видно, что код работает
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { t in
             if !self.showDebugOverlay { t.invalidate(); return }
             self.debugTick += 1
