@@ -147,6 +147,27 @@ struct PlayerScreen: View {
                     ZStack {
                         Color.black.ignoresSafeArea()
                         NativePlayerView(url: url).ignoresSafeArea()
+
+                        VStack {
+                            HStack {
+                                Button {
+                                    showNativePlayer = false
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "xmark")
+                                        Text("Закрыть")
+                                    }
+                                    .font(.subheadline).bold()
+                                    .padding(.horizontal, 14).padding(.vertical, 10)
+                                    .background(Color.black.opacity(0.7))
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
+                                }
+                                Spacer()
+                            }
+                            .padding()
+                            Spacer()
+                        }
                     }
                 }
             }
@@ -187,45 +208,75 @@ struct PlayerScreen: View {
         return url
     }
 
+    // MARK: - Диагностика (без cookies, с таймаутом)
+
     private func debugFetch(_ url: URL) {
         debugTitle = "Диагностика"
         debugMessage = "Загрузка…\n\(url.absoluteString)"
         showDebug = true
 
-        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
-            let relevant = cookies.filter {
-                $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo")
-            }
-            let cookieStr = relevant.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
-            let cookieInfo = "Cookies (\(relevant.count)): \(cookieStr.isEmpty ? "—" : cookieStr)\n\n"
+        let start = Date()
 
-            var req = URLRequest(url: url)
-            for (k, v) in HLSPrepare.baseHeaders { req.setValue(v, forHTTPHeaderField: k) }
-            if !cookieStr.isEmpty { req.setValue(cookieStr, forHTTPHeaderField: "Cookie") }
+        var req = URLRequest(url: url,
+                             cachePolicy: .reloadIgnoringLocalCacheData,
+                             timeoutInterval: 12)
+        for (k, v) in HLSPrepare.baseHeaders {
+            req.setValue(v, forHTTPHeaderField: k)
+        }
 
-            URLSession.shared.dataTask(with: req) { data, response, error in
-                DispatchQueue.main.async {
-                    if let error = error {
-                        debugMessage = cookieInfo + "Ошибка: \(error.localizedDescription)"
-                        return
-                    }
-                    guard let http = response as? HTTPURLResponse else {
-                        debugMessage = cookieInfo + "Нет HTTP-ответа"
-                        return
-                    }
-                    let mime = http.mimeType ?? "?"
-                    let len = data?.count ?? 0
-                    let head = String(data: (data ?? Data()).prefix(300), encoding: .utf8) ?? "<binary>"
-                    debugMessage = """
-                    \(cookieInfo)HTTP: \(http.statusCode)
-                    MIME: \(mime)
-                    Длина: \(len) байт
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            DispatchQueue.main.async {
+                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
+                if let err = error as NSError? {
+                    self.debugMessage = """
+                    URL: \(url.absoluteString)
 
-                    Первые 300 символов:
-                    \(head)
+                    ОШИБКА (\(elapsed) с)
+                    Домен: \(err.domain)
+                    Код: \(err.code)
+                    Описание: \(err.localizedDescription)
                     """
+                    return
                 }
-            }.resume()
+                guard let http = response as? HTTPURLResponse else {
+                    self.debugMessage = "Нет HTTP-ответа (\(elapsed) с)"
+                    return
+                }
+                let mime = http.mimeType ?? "?"
+                let len = data?.count ?? 0
+                let head = String(data: (data ?? Data()).prefix(500), encoding: .utf8) ?? "<бинарные данные>"
+                let allHeaders = http.allHeaderFields
+                    .map { "\($0.key): \($0.value)" }
+                    .sorted()
+                    .joined(separator: "\n")
+
+                self.debugMessage = """
+                HTTP: \(http.statusCode)   (\(elapsed) с)
+                MIME: \(mime)
+                Длина: \(len) байт
+
+                Первые 500 символов:
+                \(head)
+
+                Заголовки:
+                \(allHeaders)
+                """
+            }
+        }.resume()
+
+        // Страховка: если URLSession вообще не ответит за 15 с
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+            if self.showDebug && self.debugMessage.hasPrefix("Загрузка") {
+                self.debugMessage = """
+                ТАЙМАУТ 15 сек.
+                URLSession не отвечает вообще.
+
+                URL: \(url.absoluteString)
+
+                Значит сервер принимает соединение, но не отдаёт ответ,
+                либо iOS не даёт разрешения на этот домен (ATS/DNS).
+                """
+            }
         }
     }
 
