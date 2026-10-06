@@ -242,8 +242,6 @@ struct PlayerScreen: View {
     }
 }
 
-// MARK: - Sheet
-
 struct CaptureSheetView: View {
     let videoURL: URL?
     let voices: [String]
@@ -327,8 +325,6 @@ struct CaptureSheetView: View {
 extension Notification.Name {
     static let reloadPlayer = Notification.Name("reloadPlayer")
 }
-
-// MARK: - WKWebView
 
 struct RawPlayerWebView: UIViewRepresentable {
     let url: URL
@@ -578,10 +574,10 @@ struct RawPlayerWebView: UIViewRepresentable {
             let s = url.absoluteString.lowercased()
             return s.contains(".mp4") || s.contains(".m3u8") ||
                    s.contains(".mkv") || s.contains(".webm") ||
-                   s.contains(".mov") ||0 s.contains(".m4v")
+                   s.contains(".mov") || s.contains(".m4v")
         }
 
-        funcp Full webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = navigationAction.request.url else { decisionHandler(.allow); return }
             if isVideoURL(url) { onVideoURLTap?(url); decisionHandler(.cancel); return }
@@ -590,7 +586,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction navigationAction: WKNavigationAction,
+                     for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
