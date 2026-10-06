@@ -20,8 +20,9 @@ struct NativePlayerView: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator {
-        weak var vc: AVPlayerViewController?
+        var vc: AVPlayerViewController?
         var loader: HeaderResourceLoader?
+        var player: AVPlayer?
 
         func start(url: URL) {
             WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
@@ -32,13 +33,15 @@ struct NativePlayerView: UIViewControllerRepresentable {
                 if !pairs.isEmpty { headers["Cookie"] = pairs.joined(separator: "; ") }
 
                 HLSPrepare.prepare(url: url, headers: headers) { [weak self] prepared in
-                    guard let self = self else { return }
-                    DispatchQueue.main.async { self.play(prepared) }
+                    DispatchQueue.main.async {
+                        self?.play(prepared)
+                    }
                 }
             }
         }
 
         private func play(_ prepared: HLSPrepare.Result) {
+            guard let vc = self.vc else { return }
             let asset = AVURLAsset(url: prepared.playbackURL)
             if let loader = prepared.loader {
                 asset.resourceLoader.setDelegate(loader, queue: DispatchQueue.global(qos: .userInitiated))
@@ -46,7 +49,8 @@ struct NativePlayerView: UIViewControllerRepresentable {
             }
             let item = AVPlayerItem(asset: asset)
             let player = AVPlayer(playerItem: item)
-            vc?.player = player
+            self.player = player
+            vc.player = player
             player.play()
         }
     }
