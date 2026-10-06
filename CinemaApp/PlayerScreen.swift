@@ -8,20 +8,13 @@ struct PlayerScreen: View {
     @State private var isLoading = true
 
     @State private var voices: [String] = []
-    @State private var qualities: [String] = []
-
     @State private var showVoicePicker = false
-    @State private var showQualityPicker = false
-
     @State private var currentVoice: String? = nil
-    @State private var currentQuality: String? = nil
-
     @State private var pendingVoice: String? = nil
-    @State private var pendingQuality: String? = nil
-    @State private var cmdReadQualities = 0
 
     @State private var capturedVideoURL: URL?
     @State private var showCaptureSheet = false
+    @State private var lastCaptureTime: Date = .distantPast
 
     @State private var showNativePlayer = false
     @State private var nativePlayerURL: URL?
@@ -42,6 +35,13 @@ struct PlayerScreen: View {
                         url: url,
                         isLoading: $isLoading,
                         onVideoURLTap: { videoURL in
+                            let now = Date()
+                            if showCaptureSheet {
+                                capturedVideoURL = videoURL
+                                return
+                            }
+                            if now.timeIntervalSince(lastCaptureTime) < 1.5 { return }
+                            lastCaptureTime = now
                             capturedVideoURL = videoURL
                             showCaptureSheet = true
                         },
@@ -50,14 +50,7 @@ struct PlayerScreen: View {
                             voices = list
                             if currentVoice == nil { currentVoice = list.first }
                         },
-                        onQualitiesDetected: { list in
-                            if list.isEmpty { return }
-                            qualities = list
-                            if currentQuality == nil { currentQuality = list.first }
-                        },
-                        pendingVoice: $pendingVoice,
-                        pendingQuality: $pendingQuality,
-                        cmdReadQualities: $cmdReadQualities
+                        pendingVoice: $pendingVoice
                     )
                     .edgesIgnoringSafeArea(.bottom)
                 }
@@ -90,13 +83,6 @@ struct PlayerScreen: View {
                             Image(systemName: "waveform")
                         }
                     }
-                    Button {
-                        qualities = []
-                        cmdReadQualities &+= 1
-                        showQualityPicker = true
-                    } label: {
-                        Image(systemName: "tv")
-                    }
                     Button { showManualURLInput = true } label: {
                         Image(systemName: "link")
                     }
@@ -115,23 +101,6 @@ struct PlayerScreen: View {
                     Button(v) {
                         currentVoice = v
                         pendingVoice = v
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3) {
-                            qualities = []
-                            cmdReadQualities &+= 1
-                        }
-                    }
-                }
-                Button("Отмена", role: .cancel) {}
-            }
-            .confirmationDialog("Выберите качество", isPresented: $showQualityPicker, titleVisibility: .visible) {
-                if qualities.isEmpty {
-                    Text("Сканируем доступные качества…")
-                } else {
-                    ForEach(qualities, id: \.self) { q in
-                        Button(q) {
-                            currentQuality = q
-                            pendingQuality = q
-                        }
                     }
                 }
                 Button("Отмена", role: .cancel) {}
@@ -140,22 +109,10 @@ struct PlayerScreen: View {
                 CaptureSheetView(
                     videoURL: capturedVideoURL,
                     voices: voices,
-                    qualities: qualities,
                     currentVoice: currentVoice,
-                    currentQuality: currentQuality,
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
-                        capturedVideoURL = nil
-                        showCaptureSheet = false
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            qualities = []
-                            cmdReadQualities &+= 1
-                        }
-                    },
-                    onQualityChange: { q in
-                        currentQuality = q
-                        pendingQuality = q
                         capturedVideoURL = nil
                         showCaptureSheet = false
                     },
@@ -235,27 +192,34 @@ struct PlayerScreen: View {
 
     private func downloadHLS(_ url: URL) {
         downloadingURL = url
-        let headers: [String: Any] = [
+        let headers: [String: String] = [
             "Referer": "https://cinemar.cc/",
             "Origin": "https://cinemar.cc",
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         ]
-        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
-        guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
-            downloadingURL = nil
-            return
-        }
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let dest = docs.appendingPathComponent("video.mp4")
-        try? FileManager.default.removeItem(at: dest)
-        export.outputURL = dest
-        export.outputFileType = .mp4
-        export.exportAsynchronously {
-            DispatchQueue.main.async {
-                self.downloadingURL = nil
-                if export.status == .completed {
-                    self.downloadedFile = dest
-                    self.showShareSheet = true
+        var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let origScheme = (comps?.scheme ?? "https").lowercased()
+        comps?.scheme = (origScheme == "https") ? "cinemap-https" : "cinemap-http"
+        let proxyURL = comps?.url ?? url
+
+        let asset = AVURLAsset(url: proxyURL)
+        let loader = HeaderResourceLoader(headers: headers, originalScheme: origScheme)
+        asset.resourceLoader.setDelegate(loader, queue: DispatchQueue.global(qos: .userInitiated))
+
+        DispatchQueue.main.async {
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let dest = docs.appendingPathComponent("video.mp4")
+            try? FileManager.default.removeItem(at: dest)
+            let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality)
+            export?.outputURL = dest
+            export?.outputFileType = .mp4
+            export?.exportAsynchronously {
+                DispatchQueue.main.async {
+                    self.downloadingURL = nil
+                    if export?.status == .completed {
+                        self.downloadedFile = dest
+                        self.showShareSheet = true
+                    }
                 }
             }
         }
@@ -265,12 +229,9 @@ struct PlayerScreen: View {
 struct CaptureSheetView: View {
     let videoURL: URL?
     let voices: [String]
-    let qualities: [String]
     let currentVoice: String?
-    let currentQuality: String?
 
     var onVoiceChange: (String) -> Void
-    var onQualityChange: (String) -> Void
     var onPlay: (URL) -> Void
     var onDownload: (URL) -> Void
     var onCancel: () -> Void
@@ -297,20 +258,6 @@ struct CaptureSheetView: View {
                             }
                         )) {
                             ForEach(voices, id: \.self) { v in Text(v).tag(v) }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
-
-                if !qualities.isEmpty {
-                    Section("Качество") {
-                        Picker("Качество", selection: Binding(
-                            get: { currentQuality ?? qualities.first ?? "" },
-                            set: { newVal in
-                                if newVal != currentQuality { onQualityChange(newVal) }
-                            }
-                        )) {
-                            ForEach(qualities, id: \.self) { q in Text(q).tag(q) }
                         }
                         .pickerStyle(.menu)
                     }
@@ -351,10 +298,7 @@ struct RawPlayerWebView: UIViewRepresentable {
     @Binding var isLoading: Bool
     var onVideoURLTap: ((URL) -> Void)? = nil
     var onVoicesDetected: (([String]) -> Void)? = nil
-    var onQualitiesDetected: (([String]) -> Void)? = nil
     @Binding var pendingVoice: String?
-    @Binding var pendingQuality: String?
-    @Binding var cmdReadQualities: Int
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -377,9 +321,7 @@ struct RawPlayerWebView: UIViewRepresentable {
         try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
         try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
         try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
-        try{var _s=document.createElement.bind(document);}catch(e){}
         try{
-        var _ob=window.Object;
         if(!window.__hunterMediaHooked){
         window.__hunterMediaHooked=true;
         try{
@@ -412,54 +354,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
         }catch(e){}
         }
-        function clickDownloadButton(){
-        var dl=document.getElementById('player_control_pl-download');
-        if(dl){
-        try{dl.click();}catch(e){}
-        try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
-        }
-        }
-        function readQualities(){
-        clickDownloadButton();
-        setTimeout(function(){
-        var map={};
-        var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
-        for(var i=0;i<all.length;i++){
-        var el=all[i];
-        var r=el.getBoundingClientRect();
-        if(r.width<20||r.height<10) continue;
-        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
-        if(t.length<3||t.length>30) continue;
-        if(!/^\\d{3,4}p(\\s|HD|$)/i.test(t)) continue;
-        if(!map[t]||el.children.length<map[t].children.length) map[t]=el;
-        }
-        var arr=Object.keys(map).sort(function(a,b){
-        return (parseInt(b,10)||0)-(parseInt(a,10)||0);
-        });
-        try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
-        },1200);
-        }
-        function selectQuality(text){
-        clickDownloadButton();
-        setTimeout(function(){
-        var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
-        var best=null;
-        for(var i=0;i<all.length;i++){
-        var el=all[i];
-        var r=el.getBoundingClientRect();
-        if(r.width<20||r.height<10) continue;
-        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
-        if(t.indexOf(text)!==0) continue;
-        if(!best||el.children.length<best.children.length) best=el;
-        }
-        if(best){
-        try{best.click();}catch(e){}
-        try{best.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
-        }
-        },700);
-        }
-        window.__hunterReadQualities = readQualities;
-        window.__hunterSelectQuality = selectQuality;
         window.addEventListener('message',function(e){
         if(!e.data||!e.data.type) return;
         if(e.data.type==='selectVoice'){
@@ -471,10 +365,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         if((all[i].textContent||'').replace(/\\s+/g,' ').trim()===e.data.text){all[i].click();return;}
         }
         },250);
-        } else if(e.data.type==='readQualities'){
-        readQualities();
-        } else if(e.data.type==='selectQuality'){
-        selectQuality(e.data.text);
         }
         });
         setTimeout(readVoices,2000);
@@ -487,7 +377,6 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
-        config.userContentController.add(context.coordinator, name: "qualityList")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -499,7 +388,6 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         context.coordinator.onVideoURLTap = onVideoURLTap
         context.coordinator.onVoicesDetected = onVoicesDetected
-        context.coordinator.onQualitiesDetected = onQualitiesDetected
         context.coordinator.webView = webView
         context.coordinator.load(url: url)
         return webView
@@ -509,63 +397,18 @@ struct RawPlayerWebView: UIViewRepresentable {
         if let voice = pendingVoice, !voice.isEmpty {
             let esc = voice.replacingOccurrences(of: "\\", with: "\\\\")
                            .replacingOccurrences(of: "'", with: "\\'")
+            // Одиночная отправка во все iframe. Без повторов.
             let js = """
-            (function retry(n){
-            function broadcast(){
+            (function(){
             try{window.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
             var frames=document.querySelectorAll('iframe');
             for(var i=0;i<frames.length;i++){
             try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
             }
-            }
-            broadcast();
-            if(n<12) setTimeout(function(){retry(n+1);},300);
-            })(0);
+            })();
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
             DispatchQueue.main.async { pendingVoice = nil }
-        }
-
-        if cmdReadQualities > context.coordinator.lastCmdRead {
-            context.coordinator.lastCmdRead = cmdReadQualities
-            let js = """
-            (function retry(n){
-            function broadcast(){
-            try{window.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
-            try{window.postMessage({type:'readQualities'},'*');}catch(e){}
-            var frames=document.querySelectorAll('iframe');
-            for(var i=0;i<frames.length;i++){
-            try{frames[i].contentWindow.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
-            try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
-            }
-            }
-            broadcast();
-            if(n<6) setTimeout(function(){retry(n+1);},400);
-            })(0);
-            """
-            uiView.evaluateJavaScript(js, completionHandler: nil)
-        }
-
-        if let q = pendingQuality, !q.isEmpty {
-            let esc = q.replacingOccurrences(of: "\\", with: "\\\\")
-                       .replacingOccurrences(of: "'", with: "\\'")
-            let js = """
-            (function retry(n){
-            function broadcast(){
-            try{window.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
-            try{window.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
-            var frames=document.querySelectorAll('iframe');
-            for(var i=0;i<frames.length;i++){
-            try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
-            try{frames[i].contentWindow.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
-            }
-            }
-            broadcast();
-            if(n<6) setTimeout(function(){retry(n+1);},400);
-            })(0);
-            """
-            uiView.evaluateJavaScript(js, completionHandler: nil)
-            DispatchQueue.main.async { pendingQuality = nil }
         }
     }
 
@@ -576,8 +419,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         let isLoading: Binding<Bool>
         var onVideoURLTap: ((URL) -> Void)?
         var onVoicesDetected: (([String]) -> Void)?
-        var onQualitiesDetected: (([String]) -> Void)?
-        var lastCmdRead: Int = 0
         private var observer: NSObjectProtocol?
 
         init(isLoading: Binding<Bool>) {
@@ -611,9 +452,6 @@ struct RawPlayerWebView: UIViewRepresentable {
             case "voiceList":
                 guard let arr = message.body as? [String] else { return }
                 DispatchQueue.main.async { self.onVoicesDetected?(arr) }
-            case "qualityList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onQualitiesDetected?(arr) }
             default: break
             }
         }
