@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import WebKit
 
 struct NativePlayerView: UIViewControllerRepresentable {
     let url: URL
@@ -23,9 +24,18 @@ struct NativePlayerView: UIViewControllerRepresentable {
         var loader: HeaderResourceLoader?
 
         func start(url: URL) {
-            HLSPrepare.prepare(url: url) { [weak self] prepared in
-                guard let self = self else { return }
-                DispatchQueue.main.async { self.play(prepared) }
+            WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+                var headers = HLSPrepare.baseHeaders
+                let cookiePairs = cookies
+                    .filter { $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo") }
+                    .map { "\($0.name)=\($0.value)" }
+                if !cookiePairs.isEmpty {
+                    headers["Cookie"] = cookiePairs.joined(separator: "; ")
+                }
+                HLSPrepare.prepare(url: url, headers: headers) { [weak self] prepared in
+                    guard let self = self else { return }
+                    DispatchQueue.main.async { self.play(prepared) }
+                }
             }
         }
 
@@ -49,13 +59,13 @@ enum HLSPrepare {
         let loader: HeaderResourceLoader?
     }
 
-    static let headers: [String: String] = [
+    static let baseHeaders: [String: String] = [
         "Referer": "https://cinemar.cc/",
         "Origin": "https://cinemar.cc",
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     ]
 
-    static func prepare(url: URL, completion: @escaping (Result) -> Void) {
+    static func prepare(url: URL, headers: [String: String], completion: @escaping (Result) -> Void) {
         var req = URLRequest(url: url)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
 
@@ -146,19 +156,16 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
                 mime = "video/mp4"
             }
 
+            if let str = String(data: data, encoding: .utf8), str.contains("#EXTM3U") {
+                let rewritten = Self.rewritePlaylist(str)
+                if let d = rewritten.data(using: .utf8) { data = d }
+                mime = "application/vnd.apple.mpegurl"
+            }
+
             if let info = req.contentInformationRequest {
                 info.contentType = mime
                 info.contentLength = Int64(data.count)
                 info.isByteRangeAccessSupported = false
-            }
-
-            if let str = String(data: data, encoding: .utf8), str.contains("#EXTM3U") {
-                let rewritten = Self.rewritePlaylist(str)
-                if let d = rewritten.data(using: .utf8) { data = d }
-                if let info = req.contentInformationRequest {
-                    info.contentType = "application/vnd.apple.mpegurl"
-                    info.contentLength = Int64(data.count)
-                }
             }
 
             req.dataRequest?.respond(with: data)
