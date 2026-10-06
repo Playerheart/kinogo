@@ -9,3 +9,7 @@ struct CinemaApp: App {
         }
     }
 }
+
+extension Notification.Name {
+    static let reloadPlayer = Notification.Name("reloadPlayer")
+}
