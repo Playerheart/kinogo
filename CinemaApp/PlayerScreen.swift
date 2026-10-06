@@ -11,7 +11,8 @@ struct PlayerScreen: View {
     @State private var currentVoice: String? = nil
     @State private var pendingVoice: String? = nil
 
-    @State private var capturedVideoURL: URL?
+    @State private var capturedRawURL: URL? = nil
+    @State private var capturedPlayerURL: URL? = nil
     @State private var showCaptureSheet = false
     @State private var lastCaptureTime: Date = .distantPast
 
@@ -32,13 +33,15 @@ struct PlayerScreen: View {
                         onVideoURLTap: { videoURL in
                             let normalized = PlayerScreen.normalizeVideoURL(videoURL)
                             if showCaptureSheet {
-                                capturedVideoURL = normalized
+                                capturedRawURL = videoURL
+                                capturedPlayerURL = normalized
                                 return
                             }
                             let now = Date()
                             if now.timeIntervalSince(lastCaptureTime) < 1.5 { return }
                             lastCaptureTime = now
-                            capturedVideoURL = normalized
+                            capturedRawURL = videoURL
+                            capturedPlayerURL = normalized
                             showCaptureSheet = true
                         },
                         onVoicesDetected: { list in
@@ -90,13 +93,15 @@ struct PlayerScreen: View {
             }
             .sheet(isPresented: $showCaptureSheet) {
                 CaptureSheetView(
-                    videoURL: capturedVideoURL,
+                    rawURL: capturedRawURL,
+                    playerURL: capturedPlayerURL,
                     voices: voices,
                     currentVoice: currentVoice,
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
-                        capturedVideoURL = nil
+                        capturedRawURL = nil
+                        capturedPlayerURL = nil
                         showCaptureSheet = false
                     },
                     onPlay: { url in
@@ -127,7 +132,7 @@ struct PlayerScreen: View {
                     .autocorrectionDisabled()
                 Button("Играть") {
                     if let url = URL(string: manualURLText.trimmingCharacters(in: .whitespaces)) {
-                        nativePlayerURL = url
+                        nativePlayerURL = PlayerScreen.normalizeVideoURL(url)
                         showNativePlayer = true
                     }
                     manualURLText = ""
@@ -150,7 +155,8 @@ struct PlayerScreen: View {
 }
 
 struct CaptureSheetView: View {
-    let videoURL: URL?
+    let rawURL: URL?
+    let playerURL: URL?
     let voices: [String]
     let currentVoice: String?
 
@@ -162,7 +168,7 @@ struct CaptureSheetView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let url = videoURL {
+                if let url = rawURL {
                     Section("Ссылка на видео") {
                         Text(url.absoluteString)
                             .font(.system(.footnote, design: .monospaced))
@@ -171,6 +177,7 @@ struct CaptureSheetView: View {
                             .lineLimit(8)
                     }
                 }
+
                 if !voices.isEmpty {
                     Section("Озвучка") {
                         Picker("Озвучка", selection: Binding(
@@ -184,19 +191,21 @@ struct CaptureSheetView: View {
                         .pickerStyle(.menu)
                     }
                 }
-                if let url = videoURL {
-                    Section {
-                        Button {
-                            onPlay(url)
-                        } label: {
-                            Label("Играть в нативном плеере", systemImage: "play.fill")
-                        }
-                        Button {
-                            onDownload(url)
-                        } label: {
-                            Label("Скачать в Safari", systemImage: "safari")
-                        }
+
+                Section {
+                    Button {
+                        if let u = playerURL { onPlay(u) }
+                    } label: {
+                        Label("Играть в нативном плеере", systemImage: "play.fill")
                     }
+                    .disabled(playerURL == nil)
+
+                    Button {
+                        if let u = rawURL { onDownload(u) }
+                    } label: {
+                        Label("Скачать в Safari", systemImage: "safari")
+                    }
+                    .disabled(rawURL == nil)
                 }
             }
             .navigationTitle("Ссылка на видео")
