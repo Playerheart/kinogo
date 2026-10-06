@@ -1,6 +1,6 @@
 import SwiftUI
 import WebKit
-import AVFoundation
+import UIKit
 
 struct PlayerScreen: View {
     let player: Player
@@ -15,13 +15,6 @@ struct PlayerScreen: View {
     @State private var capturedVideoURL: URL?
     @State private var showCaptureSheet = false
     @State private var lastCaptureTime: Date = .distantPast
-
-    @State private var showNativePlayer = false
-    @State private var nativePlayerURL: URL?
-
-    @State private var downloadingURL: URL?
-    @State private var downloadedFile: URL?
-    @State private var showShareSheet = false
 
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
@@ -62,19 +55,6 @@ struct PlayerScreen: View {
                 }
                 if isLoading {
                     ProgressView().scaleEffect(1.6).tint(.white)
-                }
-                if downloadingURL != nil {
-                    ZStack {
-                        Color.black.opacity(0.6).ignoresSafeArea()
-                        VStack(spacing: 12) {
-                            ProgressView().tint(.white).scaleEffect(1.4)
-                            Text("Скачивание…")
-                                .foregroundStyle(.white).font(.footnote)
-                        }
-                        .padding(24)
-                        .background(Color.black.opacity(0.8))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
                 }
             }
             .navigationTitle(player.name)
@@ -131,60 +111,24 @@ struct PlayerScreen: View {
                     },
                     onPlay: { url in
                         showCaptureSheet = false
-                        nativePlayerURL = url
-                        showNativePlayer = true
+                        openInSafari(url)
                     },
                     onDownload: { url in
                         showCaptureSheet = false
-                        startDownload(url)
+                        openInSafari(url)
                     },
                     onCancel: { showCaptureSheet = false }
                 )
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
             }
-            .fullScreenCover(isPresented: $showNativePlayer) {
-                if let url = nativePlayerURL {
-                    ZStack {
-                        Color.black.ignoresSafeArea()
-                        NativePlayerView(url: url).ignoresSafeArea()
-
-                        VStack {
-                            HStack {
-                                Button {
-                                    showNativePlayer = false
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "xmark")
-                                        Text("Закрыть")
-                                    }
-                                    .font(.subheadline).bold()
-                                    .padding(.horizontal, 14).padding(.vertical, 10)
-                                    .background(Color.black.opacity(0.7))
-                                    .foregroundStyle(.white)
-                                    .clipShape(Capsule())
-                                }
-                                Spacer()
-                            }
-                            .padding()
-                            Spacer()
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $showShareSheet) {
-                if let file = downloadedFile {
-                    ShareSheet(activityItems: [file])
-                }
-            }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
                 TextField("https://… .mp4 или .m3u8", text: $manualURLText)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                Button("Играть") {
+                Button("Открыть в Safari") {
                     if let url = URL(string: manualURLText.trimmingCharacters(in: .whitespaces)) {
-                        nativePlayerURL = PlayerScreen.normalizeVideoURL(url)
-                        showNativePlayer = true
+                        openInSafari(PlayerScreen.normalizeVideoURL(url))
                     }
                     manualURLText = ""
                 }
@@ -248,17 +192,14 @@ struct PlayerScreen: View {
         return url
     }
 
+    private func openInSafari(_ url: URL) {
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+    }
+
     private func debugFetch(_ url: URL) {
         debugTitle = "Диагностика сети"
-        debugMessage = "▶ Тестирую три URL…\n\n(⏱ 0.0 с)"
+        debugMessage = "▶ Тестирую три URL…"
         showDebugOverlay = true
-        debugTick = 0
-
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { t in
-            if !self.showDebugOverlay { t.invalidate(); return }
-            self.debugTick += 1
-            if self.debugTick > 40 { t.invalidate() }
-        }
 
         var results: [String] = []
         let lock = NSLock()
@@ -308,24 +249,6 @@ struct PlayerScreen: View {
 
         group.notify(queue: .main) {
             self.debugMessage = "▶ Завершено: 3 / 3\n\n" + results.sorted().joined(separator: "\n\n")
-        }
-    }
-
-    private func startDownload(_ url: URL) {
-        downloadingURL = url
-        Downloader.downloadHLS(url: url) { result in
-            DispatchQueue.main.async {
-                self.downloadingURL = nil
-                switch result {
-                case .success(let file):
-                    self.downloadedFile = file
-                    self.showShareSheet = true
-                case .failure(let err):
-                    self.debugTitle = "Ошибка скачивания"
-                    self.debugMessage = err.localizedDescription
-                    self.showDebugOverlay = true
-                }
-            }
         }
     }
 }
