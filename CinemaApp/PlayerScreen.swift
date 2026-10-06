@@ -28,7 +28,8 @@ struct PlayerScreen: View {
 
     @State private var debugTitle: String = ""
     @State private var debugMessage: String = ""
-    @State private var showDebug = false
+    @State private var showDebugOverlay = false
+    @State private var debugTick = 0
 
     var body: some View {
         NavigationStack {
@@ -191,29 +192,78 @@ struct PlayerScreen: View {
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
             }
-            .alert(debugTitle, isPresented: $showDebug) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(debugMessage)
+        }
+        .overlay {
+            if showDebugOverlay {
+                debugOverlay
             }
+        }
+    }
+
+    // MARK: - Overlay диагностики
+
+    private var debugOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.9).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 16) {
+                Text(debugTitle)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                ScrollView {
+                    Text(debugMessage)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 380)
+                .padding(10)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                Button {
+                    showDebugOverlay = false
+                } label: {
+                    Text("Закрыть")
+                        .font(.subheadline).bold()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(20)
+            .background(Color(white: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(24)
         }
     }
 
     static func normalizeVideoURL(_ url: URL) -> URL {
         let s = url.absoluteString
         if let r = s.range(of: ":hls:") {
-            let trimmed = String(s[..<r.lowerBound])
+            let trimmed = String(s[..:r.lowerBound])
             if let u = URL(string: trimmed) { return u }
         }
         return url
     }
 
-    // MARK: - Диагностика сети (мультитест)
+    // MARK: - Диагностика сети
 
     private func debugFetch(_ url: URL) {
         debugTitle = "Диагностика сети"
-        debugMessage = "Тестирую три URL…"
-        showDebug = true
+        debugMessage = "▶ Тестирую три URL…\n\n(⏱ 0.0 с)"
+        showDebugOverlay = true
+        debugTick = 0
+
+        // Живой счётчик секунд, чтобы было видно, что код работает
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { t in
+            if !self.showDebugOverlay { t.invalidate(); return }
+            self.debugTick += 1
+            if self.debugTick > 40 { t.invalidate() }
+        }
 
         var results: [String] = []
         let lock = NSLock()
@@ -236,7 +286,7 @@ struct PlayerScreen: View {
                 let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
                 var line: String
                 if let err = error as NSError? {
-                    line = "\(name)  ❌  \(elapsed)с  \(err.domain)#\(err.code)  \(err.localizedDescription)"
+                    line = "\(name)  ❌  \(elapsed)с\n   \(err.domain)#\(err.code)\n   \(err.localizedDescription)"
                 } else if let http = response as? HTTPURLResponse {
                     line = "\(name)  ✅  \(elapsed)с  HTTP \(http.statusCode)  \(data?.count ?? 0) б"
                 } else {
@@ -244,15 +294,17 @@ struct PlayerScreen: View {
                 }
                 lock.lock()
                 results.append(line)
-                let snapshot = results.sorted().joined(separator: "\n")
+                let snapshot = results.sorted().joined(separator: "\n\n")
                 lock.unlock()
-                DispatchQueue.main.async { self.debugMessage = snapshot }
+                DispatchQueue.main.async {
+                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)\n\n(тик: \(self.debugTick))"
+                }
                 group.leave()
             }.resume()
         }
 
         group.notify(queue: .main) {
-            self.debugMessage = results.sorted().joined(separator: "\n")
+            self.debugMessage = "▶ Завершено: 3 / 3\n\n" + results.sorted().joined(separator: "\n\n")
         }
     }
 
@@ -268,7 +320,7 @@ struct PlayerScreen: View {
                 case .failure(let err):
                     self.debugTitle = "Ошибка скачивания"
                     self.debugMessage = err.localizedDescription
-                    self.showDebug = true
+                    self.showDebugOverlay = true
                 }
             }
         }
