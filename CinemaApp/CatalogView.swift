@@ -69,18 +69,6 @@ struct CatalogView: View {
                 ToolbarItem(placement: .principal) {
                     Color.clear.frame(width: 1, height: 1)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        if let url = URL(string: "https://mix.kinogo.mu/") {
-                            currentURL = nil
-                            isLoading = true
-                            NotificationCenter.default.post(name: .reloadPlayer, object: url)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .foregroundStyle(.white)
-                    }
-                }
             }
             .searchable(text: $searchQuery, prompt: "Поиск фильма") {
                 ForEach(suggestions) { s in
@@ -142,28 +130,52 @@ struct CatalogView: View {
         } catch {}
     }
 
+    private func reloadCurrent() {
+        if let url = URL(string: "https://mix.kinogo.mu/") {
+            currentURL = nil
+            isLoading = true
+            NotificationCenter.default.post(name: .reloadPlayer, object: url)
+        }
+    }
+
     private var sectionBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(CatalogSection.allCases) { s in
-                    Button {
-                        if section != s {
-                            section = s
-                            isLoading = true
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(CatalogSection.allCases) { s in
+                        Button {
+                            if section != s {
+                                section = s
+                                isLoading = true
+                            }
+                        } label: {
+                            Text(s.rawValue)
+                                .font(.subheadline).bold()
+                                .padding(.horizontal, 14).padding(.vertical, 8)
+                                .background(section == s ? Color.blue : Color.white.opacity(0.08))
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
                         }
-                    } label: {
-                        Text(s.rawValue)
-                            .font(.subheadline).bold()
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(section == s ? Color.blue : Color.white.opacity(0.08))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.leading, 12)
+                .padding(.trailing, 4)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+
+            Button {
+                reloadCurrent()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.subheadline).bold()
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.white.opacity(0.08))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.trailing, 12)
         }
         .background(Color.black)
     }
