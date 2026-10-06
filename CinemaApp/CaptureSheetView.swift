@@ -6,8 +6,9 @@ struct CaptureSheetView: View {
     let currentVoice: String?
 
     var onVoiceChange: (String) -> Void
-    var onPlay: (URL) -> Void
-    var onDownload: (URL) -> Void
+    var onOpenInSafari: (URL) -> Void
+    var onShare: (URL) -> Void
+    var onCopy: (URL) -> Void
     var onCancel: () -> Void
 
     var body: some View {
@@ -40,14 +41,19 @@ struct CaptureSheetView: View {
                 if let url = videoURL {
                     Section {
                         Button {
-                            onPlay(url)
+                            onOpenInSafari(url)
                         } label: {
-                            Label("Открыть видео в Safari", systemImage: "safari")
+                            Label("Открыть в Safari", systemImage: "safari")
                         }
                         Button {
-                            onDownload(url)
+                            onShare(url)
                         } label: {
-                            Label("Скачать в Safari", systemImage: "arrow.down.circle")
+                            Label("Поделиться ссылкой", systemImage: "square.and.arrow.up")
+                        }
+                        Button {
+                            onCopy(url)
+                        } label: {
+                            Label("Скопировать ссылку", systemImage: "doc.on.doc")
                         }
                     }
                 }
