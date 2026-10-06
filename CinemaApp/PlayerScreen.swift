@@ -19,14 +19,13 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
-    @State private var debugTitle: String = ""
-    @State private var debugMessage: String = ""
-    @State private var showDebugOverlay = false
-
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
+
+                // WKWebView: скрыт, но остаётся в иерархии — он источник
+                // всех запросов к cinemar. Через JS hunter ловит .mp4/.m3u8.
                 if let url = URL(string: player.url) {
                     RawPlayerWebView(
                         url: url,
@@ -50,10 +49,19 @@ struct PlayerScreen: View {
                         },
                         pendingVoice: $pendingVoice
                     )
-                    .edgesIgnoringSafeArea(.bottom)
+                    .opacity(0)
+                    .allowsHitTesting(false)
+                    .edgesIgnoringSafeArea(.all)
                 }
-                if isLoading {
-                    ProgressView().scaleEffect(1.6).tint(.white)
+
+                // Видимый слой — вместо плеера
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .scaleEffect(1.6)
+                        .tint(.white)
+                    Text("Подготовка видео…")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
                 }
             }
             .navigationTitle(player.name)
@@ -68,23 +76,8 @@ struct PlayerScreen: View {
                             Image(systemName: "waveform")
                         }
                     }
-                    Button {
-                        if let url = capturedVideoURL ?? URL(string: player.url) {
-                            debugFetch(url)
-                        }
-                    } label: {
-                        Image(systemName: "stethoscope")
-                    }
                     Button { showManualURLInput = true } label: {
                         Image(systemName: "link")
-                    }
-                    Button {
-                        if let url = URL(string: player.url) {
-                            isLoading = true
-                            NotificationCenter.default.post(name: .reloadPlayer, object: url)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
                     }
                 }
             }
@@ -109,13 +102,10 @@ struct PlayerScreen: View {
                         showCaptureSheet = false
                     },
                     onOpenInSafari: { url in
-                        // 1) закрываем sheet
                         showCaptureSheet = false
-                        // 2) закрываем весь PlayerScreen — возвращаемся к описанию фильма
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             dismiss()
                         }
-                        // 3) открываем Safari
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
                             UIApplication.shared.open(url, options: [:], completionHandler: nil)
                         }
@@ -125,10 +115,20 @@ struct PlayerScreen: View {
                     },
                     onCopy: { url in
                         UIPasteboard.general.string = url.absoluteString
+                        showCaptureSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            dismiss()
+                        }
                     },
-                    onCancel: { showCaptureSheet = false }
+                    onCancel: {
+                        // «Отмена» в sheet = закрыть sheet + вернуться к описанию фильма
+                        showCaptureSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            dismiss()
+                        }
+                    }
                 )
-                .presentationDetents([.medium, .large])
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
@@ -145,11 +145,6 @@ struct PlayerScreen: View {
                 Button("Отмена", role: .cancel) { manualURLText = "" }
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
-            }
-        }
-        .overlay {
-            if showDebugOverlay {
-                debugOverlay
             }
         }
     }
@@ -174,45 +169,6 @@ struct PlayerScreen: View {
         top.present(activity, animated: true, completion: nil)
     }
 
-    private var debugOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.9).ignoresSafeArea()
-            VStack(alignment: .leading, spacing: 16) {
-                Text(debugTitle)
-                    .font(.headline)
-                    .foregroundStyle(.white)
-
-                ScrollView {
-                    Text(debugMessage)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 380)
-                .padding(10)
-                .background(Color.white.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                Button {
-                    showDebugOverlay = false
-                } label: {
-                    Text("Закрыть")
-                        .font(.subheadline).bold()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
-                }
-            }
-            .padding(20)
-            .background(Color(white: 0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .padding(24)
-        }
-    }
-
     static func normalizeVideoURL(_ url: URL) -> URL {
         let s = url.absoluteString
         if let r = s.range(of: ":hls:") {
@@ -220,61 +176,5 @@ struct PlayerScreen: View {
             if let u = URL(string: trimmed) { return u }
         }
         return url
-    }
-
-    private func debugFetch(_ url: URL) {
-        debugTitle = "Диагностика сети"
-        debugMessage = "▶ Тестирую три URL…"
-        showDebugOverlay = true
-
-        var results: [String] = []
-        let lock = NSLock()
-        let group = DispatchGroup()
-
-        let tests: [(String, URL, Bool)] = [
-            ("google.com",        URL(string: "https://www.google.com/")!, false),
-            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!, false),
-            ("host.cinemap.cc",   url, true)
-        ]
-
-        for (name, testURL, showBody) in tests {
-            group.enter()
-            var req = URLRequest(url: testURL,
-                                 cachePolicy: .reloadIgnoringLocalCacheData,
-                                 timeoutInterval: 8)
-            for (k, v) in HLSPrepare.baseHeaders { req.setValue(v, forHTTPHeaderField: k) }
-            let start = Date()
-            URLSession.shared.dataTask(with: req) { data, response, error in
-                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
-                var line: String
-                if let err = error as NSError? {
-                    line = "\(name)  ❌  \(elapsed)с\n   \(err.domain)#\(err.code)\n   \(err.localizedDescription)"
-                } else if let http = response as? HTTPURLResponse {
-                    let mime = http.mimeType ?? "?"
-                    let len = data?.count ?? 0
-                    var block = "\(name)  ✅  \(elapsed)с\n   HTTP \(http.statusCode)  \(len) б  \(mime)"
-                    if showBody, let d = data {
-                        let preview = String(data: d.prefix(400), encoding: .utf8)
-                            ?? "<бинарные данные>"
-                        block += "\n\n   ПЕРВЫЕ 400 СИМВОЛОВ:\n\(preview)"
-                    }
-                    line = block
-                } else {
-                    line = "\(name)  ?  \(elapsed)с  нет ответа"
-                }
-                lock.lock()
-                results.append(line)
-                let snapshot = results.sorted().joined(separator: "\n\n")
-                lock.unlock()
-                DispatchQueue.main.async {
-                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)"
-                }
-                group.leave()
-            }.resume()
-        }
-
-        group.notify(queue: .main) {
-            self.debugMessage = "▶ Завершено: 3 / 3\n\n" + results.sorted().joined(separator: "\n\n")
-        }
     }
 }
