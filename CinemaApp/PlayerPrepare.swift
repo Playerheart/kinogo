@@ -15,7 +15,7 @@ enum HLSPrepare {
     ]
 
     static func prepare(url: URL, headers: [String: String], completion: @escaping (Result) -> Void) {
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
 
         URLSession.shared.dataTask(with: req) { data, _, _ in
@@ -82,7 +82,7 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
         comps?.scheme = originalScheme
         guard let realURL = comps?.url else { return false }
 
-        var request = URLRequest(url: realURL)
+        var request = URLRequest(url: realURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
 
         let task = URLSession.shared.dataTask(with: request) { data, _, error in
@@ -144,7 +144,7 @@ final class HeaderResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
 }
 
 enum Downloader {
-    enum DL: Error { case http(Int), emptyPlaylist, parseFailed }
+    enum DL: Error { case http(Int), emptyPlaylist, parseFailed, timeout }
 
     static func downloadHLS(url: URL, completion: @escaping (Result<URL, Error>) -> Void) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
@@ -211,7 +211,7 @@ enum Downloader {
     }
 
     private static func fetchText(url: URL, headers: [String: String], completion: @escaping (Result<String, Error>) -> Void) {
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         URLSession.shared.dataTask(with: req) { data, response, error in
             if let error = error { completion(.failure(error)); return }
@@ -227,7 +227,7 @@ enum Downloader {
     }
 
     private static func fetchBinary(url: URL, headers: [String: String], completion: @escaping (Result<URL, Error>) -> Void) {
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 12)
         for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
         URLSession.shared.downloadTask(with: req) { local, response, error in
             if let error = error { completion(.failure(error)); return }
