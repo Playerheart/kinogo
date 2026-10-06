@@ -145,13 +145,11 @@ struct PlayerScreen: View {
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
-                        () capturedVideoURL = nil
-                        showCaptureSheet = -> false
-                        DispatchQueue.main.async VoidAfter(deadline: .now() +
-
- 1.5) {
-                            qualities =    []
-                            cmdReadQualities &+=  var1
+                        capturedVideoURL = nil
+                        showCaptureSheet = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                            qualities = []
+                            cmdReadQualities &+= 1
                         }
                     },
                     onQualityChange: { q in
@@ -234,7 +232,9 @@ struct CaptureSheetView: View {
     var onQualityChange: (String) -> Void
     var onPlay: (URL) -> Void
     var onDownload: (URL) -> Void
-    var onCancel: body: some View {
+    var onCancel: () -> Void
+
+    var body: some View {
         NavigationStack {
             Form {
                 if let url = videoURL {
@@ -325,106 +325,97 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         let hunterJS = """
         (function(){
-            var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
-            if (!isCinemar || window.__hunterInstalled) return;
-            window.__hunterInstalled = true;
-
-            function reportVideo(u){
-                if(!u) return;
-                var l=u.toLowerCase();
-                if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
-                try{window.webkit.messageHandlers.videoURL.postMessage(u);}catch(e){}
-            }
-
-            try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
-            try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
-            try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
-
-            function readVoices(){
-                try{
-                    var btns=document.querySelectorAll('.playlist-dropdown button');
-                    var arr=[];
-                    for(var i=0;i<btns.length;i++){
-                        var t=(btns[i].textContent||'').replace(/\\s+/g,' ').trim();
-                        if(t&&arr.indexOf(t)===-1) arr.push(t);
-                    }
-                    if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
-                }catch(e){}
-            }
-
-            function clickDownloadButton(){
-                var dl=document.getElementById('player_control_pl-download');
-                if(dl){
-                    try{dl.click();}catch(e){}
-                    try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
-                }
-            }
-
-            function readQualities(){
-                clickDownloadButton();
-                setTimeout(function(){
-                    var map={};
-                    var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
-                    for(var i=0;i<all.length;i++){
-                        var el=all[i];
-                        var r=el.getBoundingClientRect();
-                        if(r.width<20||r.height<10) continue;
-                        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
-                        if(t.length<3||t.length>30) continue;
-                        if(!/^\\d{3,4}p(\\s|HD|$)/i.test(t)) continue;
-                        if(!map[t]||el.children.length<map[t].children.length) map[t]=el;
-                    }
-                    var arr=Object.keys(map).sort(function(a,b){
-                        return (parseInt(b,10)||0)-(parseInt(a,10)||0);
-                    });
-                    try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
-                },1200);
-            }
-
-            function selectQuality(text){
-                clickDownloadButton();
-                setTimeout(function(){
-                    var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
-                    var best=null;
-                    for(var i=0;i<all.length;i++){
-                        var el=all[i];
-                        var r=el.getBoundingClientRect();
-                        if(r.width<20||r.height<10) continue;
-                        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
-                        if(t.indexOf(text)!==0) continue;
-                        if(!best||el.children.length<best.children.length) best=el;
-                    }
-                    if(best){
-                        try{best.click();}catch(e){}
-                        try{best.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
-                    }
-                },700);
-            }
-
-            window.__hunterReadQualities = readQualities;
-            window.__hunterSelectQuality = selectQuality;
-
-            window.addEventListener('message',function(e){
-                if(!e.data||!e.data.type) return;
-                if(e.data.type==='selectVoice'){
-                    var title=document.querySelector('.playlist-title');
-                    if(title) title.click();
-                    setTimeout(function(){
-                        var all=document.querySelectorAll('.playlist-dropdown button');
-                        for(var i=0;i<all.length;i++){
-                            if((all[i].textContent||'').replace(/\\s+/g,' ').trim()===e.data.text){all[i].click();return;}
-                        }
-                    },250);
-                } else if(e.data.type==='readQualities'){
-                    readQualities();
-                } else if(e.data.type==='selectQuality'){
-                    selectQuality(e.data.text);
-                }
-            });
-
-            setTimeout(readVoices,2000);
-            setTimeout(readVoices,5000);
-            setTimeout(readVoices,9000);
+        var isCinemar = (location.hostname||'').indexOf('cinemar') !== -1;
+        if (!isCinemar || window.__hunterInstalled) return;
+        window.__hunterInstalled = true;
+        function reportVideo(u){
+        if(!u) return;
+        var l=u.toLowerCase();
+        if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
+        try{window.webkit.messageHandlers.videoURL.postMessage(u);}catch(e){}
+        }
+        try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
+        try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
+        try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
+        function readVoices(){
+        try{
+        var btns=document.querySelectorAll('.playlist-dropdown button');
+        var arr=[];
+        for(var i=0;i<btns.length;i++){
+        var t=(btns[i].textContent||'').replace(/\\s+/g,' ').trim();
+        if(t&&arr.indexOf(t)===-1) arr.push(t);
+        }
+        if(arr.length) window.webkit.messageHandlers.voiceList.postMessage(arr);
+        }catch(e){}
+        }
+        function clickDownloadButton(){
+        var dl=document.getElementById('player_control_pl-download');
+        if(dl){
+        try{dl.click();}catch(e){}
+        try{dl.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
+        }
+        }
+        function readQualities(){
+        clickDownloadButton();
+        setTimeout(function(){
+        var map={};
+        var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
+        for(var i=0;i<all.length;i++){
+        var el=all[i];
+        var r=el.getBoundingClientRect();
+        if(r.width<20||r.height<10) continue;
+        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
+        if(t.length<3||t.length>30) continue;
+        if(!/^\\d{3,4}p(\\s|HD|$)/i.test(t)) continue;
+        if(!map[t]||el.children.length<map[t].children.length) map[t]=el;
+        }
+        var arr=Object.keys(map).sort(function(a,b){
+        return (parseInt(b,10)||0)-(parseInt(a,10)||0);
+        });
+        try{window.webkit.messageHandlers.qualityList.postMessage(arr);}catch(e){}
+        },1200);
+        }
+        function selectQuality(text){
+        clickDownloadButton();
+        setTimeout(function(){
+        var all=document.querySelectorAll('div,button,li,a,span,pjsdiv');
+        var best=null;
+        for(var i=0;i<all.length;i++){
+        var el=all[i];
+        var r=el.getBoundingClientRect();
+        if(r.width<20||r.height<10) continue;
+        var t=(el.textContent||'').replace(/\\s+/g,' ').trim();
+        if(t.indexOf(text)!==0) continue;
+        if(!best||el.children.length<best.children.length) best=el;
+        }
+        if(best){
+        try{best.click();}catch(e){}
+        try{best.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));}catch(e){}
+        }
+        },700);
+        }
+        window.__hunterReadQualities = readQualities;
+        window.__hunterSelectQuality = selectQuality;
+        window.addEventListener('message',function(e){
+        if(!e.data||!e.data.type) return;
+        if(e.data.type==='selectVoice'){
+        var title=document.querySelector('.playlist-title');
+        if(title) title.click();
+        setTimeout(function(){
+        var all=document.querySelectorAll('.playlist-dropdown button');
+        for(var i=0;i<all.length;i++){
+        if((all[i].textContent||'').replace(/\\s+/g,' ').trim()===e.data.text){all[i].click();return;}
+        }
+        },250);
+        } else if(e.data.type==='readQualities'){
+        readQualities();
+        } else if(e.data.type==='selectQuality'){
+        selectQuality(e.data.text);
+        }
+        });
+        setTimeout(readVoices,2000);
+        setTimeout(readVoices,5000);
+        setTimeout(readVoices,9000);
         })();
         """
         let hunterScript = WKUserScript(source: hunterJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
@@ -456,28 +447,27 @@ struct RawPlayerWebView: UIViewRepresentable {
                            .replacingOccurrences(of: "'", with: "\\'")
             let js = """
             (function retry(n){
-                var frames=document.querySelectorAll('iframe');
-                for(var i=0;i<frames.length;i++){
-                    try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
-                }
- arr = message                if(n<10) setTimeout(function(){retry.body(n+1);}, as? [String]300 else);
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.postMessage({type:'selectVoice',text:'\(esc)'},'*');}catch(e){}
+            }
+            if(n<10) setTimeout(function(){retry(n+1);},300);
             })(0);
             """
-            { uiView.evaluateJavaScript(js, completionHandler return: nil)
-            DispatchQueue.main }
-.async { pendingVoice = nil }
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+            DispatchQueue.main.async { pendingVoice = nil }
         }
 
-        if cmdReadQualities > context.coordinator                Dispatch.lastCmdRead {
-Queue            context.coord.maininator.as.lastCmdRead = cmdReadQualities
-            letync js = """
+        if cmdReadQualities > context.coordinator.lastCmdRead {
+            context.coordinator.lastCmdRead = cmdReadQualities
+            let js = """
             (function retry(n){
- {                var frames=document.querySelectorAll(' selfiframe');
-.on                for(var i=Vo0;i<framesices.length;iDet++){
-                    try{frames[i].contentWindowected.eval('window?(.__hunterReadQualities && window.__hunterReadarrQualities()');})catch(e){}
-                    try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
-                }
-                if(n<5) setTimeout(function(){retry(n+1);},400);
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.eval('window.__hunterReadQualities && window.__hunterReadQualities()');}catch(e){}
+            try{frames[i].contentWindow.postMessage({type:'readQualities'},'*');}catch(e){}
+            }
+            if(n<5) setTimeout(function(){retry(n+1);},400);
             })(0);
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
@@ -488,12 +478,12 @@ Queue            context.coord.maininator.as.lastCmdRead = cmdReadQualities
                        .replacingOccurrences(of: "'", with: "\\'")
             let js = """
             (function retry(n){
-                var frames=document.querySelectorAll('iframe');
-                for(var i=0;i<frames.length;i++){
-                    try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
-                    try{frames[i].contentWindow.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
-                }
-                if(n<5) setTimeout(function(){retry(n+1);},400);
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.eval("window.__hunterSelectQuality && window.__hunterSelectQuality('\(esc)')");}catch(e){}
+            try{frames[i].contentWindow.postMessage({type:'selectQuality',text:'\(esc)'},'*');}catch(e){}
+            }
+            if(n<5) setTimeout(function(){retry(n+1);},400);
             })(0);
             """
             uiView.evaluateJavaScript(js, completionHandler: nil)
@@ -541,7 +531,8 @@ Queue            context.coord.maininator.as.lastCmdRead = cmdReadQualities
                 guard let str = message.body as? String, let url = URL(string: str) else { return }
                 DispatchQueue.main.async { self.onVideoURLTap?(url) }
             case "voiceList":
-                guard let }
+                guard let arr = message.body as? [String] else { return }
+                DispatchQueue.main.async { self.onVoicesDetected?(arr) }
             case "qualityList":
                 guard let arr = message.body as? [String] else { return }
                 DispatchQueue.main.async { self.onQualitiesDetected?(arr) }
