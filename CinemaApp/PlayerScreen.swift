@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AVFoundation
 
 struct PlayerScreen: View {
     let player: Player
@@ -11,13 +12,16 @@ struct PlayerScreen: View {
     @State private var currentVoice: String? = nil
     @State private var pendingVoice: String? = nil
 
-    @State private var capturedRawURL: URL? = nil
-    @State private var capturedPlayerURL: URL? = nil
+    @State private var capturedVideoURL: URL?
     @State private var showCaptureSheet = false
     @State private var lastCaptureTime: Date = .distantPast
 
     @State private var showNativePlayer = false
     @State private var nativePlayerURL: URL?
+
+    @State private var downloadingURL: URL?
+    @State private var downloadedFile: URL?
+    @State private var showShareSheet = false
 
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
@@ -33,15 +37,13 @@ struct PlayerScreen: View {
                         onVideoURLTap: { videoURL in
                             let normalized = PlayerScreen.normalizeVideoURL(videoURL)
                             if showCaptureSheet {
-                                capturedRawURL = videoURL
-                                capturedPlayerURL = normalized
+                                capturedVideoURL = normalized
                                 return
                             }
                             let now = Date()
                             if now.timeIntervalSince(lastCaptureTime) < 1.5 { return }
                             lastCaptureTime = now
-                            capturedRawURL = videoURL
-                            capturedPlayerURL = normalized
+                            capturedVideoURL = normalized
                             showCaptureSheet = true
                         },
                         onVoicesDetected: { list in
@@ -55,6 +57,19 @@ struct PlayerScreen: View {
                 }
                 if isLoading {
                     ProgressView().scaleEffect(1.6).tint(.white)
+                }
+                if downloadingURL != nil {
+                    ZStack {
+                        Color.black.opacity(0.6).ignoresSafeArea()
+                        VStack(spacing: 12) {
+                            ProgressView().tint(.white).scaleEffect(1.4)
+                            Text("Скачивание…")
+                                .foregroundStyle(.white).font(.footnote)
+                        }
+                        .padding(24)
+                        .background(Color.black.opacity(0.8))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
             }
             .navigationTitle(player.name)
@@ -93,15 +108,13 @@ struct PlayerScreen: View {
             }
             .sheet(isPresented: $showCaptureSheet) {
                 CaptureSheetView(
-                    rawURL: capturedRawURL,
-                    playerURL: capturedPlayerURL,
+                    videoURL: capturedVideoURL,
                     voices: voices,
                     currentVoice: currentVoice,
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
-                        capturedRawURL = nil
-                        capturedPlayerURL = nil
+                        capturedVideoURL = nil
                         showCaptureSheet = false
                     },
                     onPlay: { url in
@@ -111,7 +124,7 @@ struct PlayerScreen: View {
                     },
                     onDownload: { url in
                         showCaptureSheet = false
-                        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                        startDownload(url)
                     },
                     onCancel: { showCaptureSheet = false }
                 )
@@ -124,6 +137,11 @@ struct PlayerScreen: View {
                         Color.black.ignoresSafeArea()
                         NativePlayerView(url: url).ignoresSafeArea()
                     }
+                }
+            }
+            .sheet(isPresented: $showShareSheet) {
+                if let file = downloadedFile {
+                    ShareSheet(activityItems: [file])
                 }
             }
             .alert("Вставить URL видео", isPresented: $showManualURLInput) {
@@ -152,11 +170,48 @@ struct PlayerScreen: View {
         }
         return url
     }
+
+    private func startDownload(_ url: URL) {
+        downloadingURL = url
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            var headers = HLSPrepare.baseHeaders
+            let cookiePairs = cookies
+                .filter { $0.domain.contains("cinemar") || $0.domain.contains("cinemap") || $0.domain.contains("kinogo") }
+                .map { "\($0.name)=\($0.value)" }
+            if !cookiePairs.isEmpty { headers["Cookie"] = cookiePairs.joined(separator: "; ") }
+
+            HLSPrepare.prepare(url: url, headers: headers) { prepared in
+                let asset = AVURLAsset(url: prepared.playbackURL)
+                if let loader = prepared.loader {
+                    asset.resourceLoader.setDelegate(loader, queue: DispatchQueue.global(qos: .userInitiated))
+                }
+                DispatchQueue.main.async {
+                    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                    let dest = docs.appendingPathComponent("video.mp4")
+                    try? FileManager.default.removeItem(at: dest)
+                    guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality) else {
+                        self.downloadingURL = nil
+                        return
+                    }
+                    export.outputURL = dest
+                    export.outputFileType = .mp4
+                    export.exportAsynchronously {
+                        DispatchQueue.main.async {
+                            self.downloadingURL = nil
+                            if export.status == .completed {
+                                self.downloadedFile = dest
+                                self.showShareSheet = true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 struct CaptureSheetView: View {
-    let rawURL: URL?
-    let playerURL: URL?
+    let videoURL: URL?
     let voices: [String]
     let currentVoice: String?
 
@@ -168,7 +223,7 @@ struct CaptureSheetView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let url = rawURL {
+                if let url = videoURL {
                     Section("Ссылка на видео") {
                         Text(url.absoluteString)
                             .font(.system(.footnote, design: .monospaced))
@@ -192,20 +247,19 @@ struct CaptureSheetView: View {
                     }
                 }
 
-                Section {
-                    Button {
-                        if let u = playerURL { onPlay(u) }
-                    } label: {
-                        Label("Играть в нативном плеере", systemImage: "play.fill")
+                if let url = videoURL {
+                    Section {
+                        Button {
+                            onPlay(url)
+                        } label: {
+                            Label("Играть в нативном плеере", systemImage: "play.fill")
+                        }
+                        Button {
+                            onDownload(url)
+                        } label: {
+                            Label("Скачать файл", systemImage: "arrow.down.circle")
+                        }
                     }
-                    .disabled(playerURL == nil)
-
-                    Button {
-                        if let u = rawURL { onDownload(u) }
-                    } label: {
-                        Label("Скачать в Safari", systemImage: "safari")
-                    }
-                    .disabled(rawURL == nil)
                 }
             }
             .navigationTitle("Ссылка на видео")
