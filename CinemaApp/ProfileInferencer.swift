@@ -223,9 +223,13 @@ final class ProfileInferencer: NSObject {
             guard let jsonStr = result as? String,
                   let data = jsonStr.data(using: .utf8),
                   let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                self.log("  ⚠️ JS вернул не JSON")
+                self.log("  ⚠️ JS вернул не JSON: \(String(describing: result).prefix(200))")
                 self.finalizeAll()
                 return
+            }
+
+            if let e = dict["__err"] as? String, !e.isEmpty {
+                self.log("  ⚠️ Внутренняя JS-ошибка: \(e)")
             }
 
             var profile = self.catalogProfile ?? SiteProfile.default
@@ -634,7 +638,7 @@ final class ProfileInferencer: NSObject {
     })();
     """
 
-    // MARK: - JS: детальная
+    // MARK: - JS: детальная (максимально защищённый)
 
     private static let detailCollectorJS = """
     (function(){
@@ -649,157 +653,201 @@ final class ProfileInferencer: NSObject {
       infoSpans: '',
       fDop: '',
       playersTabs: '',
-      playersContainer: ''
+      playersContainer: '',
+      __err: ''
     };
 
+    function safe(fn, tag) {
+      try { return fn(); } catch(e) { out.__err = (out.__err ? out.__err + '; ' : '') + tag + ': ' + (e && e.message ? e.message : String(e)); return null; }
+    }
+
     function classesOf(el) {
-      var cls = String(el.className || '').trim();
-      if (!cls) return [];
-      return cls.split(/\\s+/).filter(function(p){return p.length >= 3});
+      try {
+        var cls = String(el.className || '').trim();
+        if (!cls) return [];
+        return cls.split(/\\s+/).filter(function(p){return p && p.length >= 3});
+      } catch(e) { return []; }
     }
 
     function buildSelector(el) {
       if (!el) return '';
-      var tag = el.tagName.toLowerCase();
-      var parts = classesOf(el);
-      if (parts.length > 0) {
-        parts.sort(function(a,b){return b.length - a.length});
-        return tag + '.' + parts[0];
-      }
-      var node = el.parentElement;
-      var depth = 0;
-      while (node && node !== document.body && depth < 4) {
-        var pcls = classesOf(node);
-        if (pcls.length > 0) {
-          pcls.sort(function(a,b){return b.length - a.length});
-          return node.tagName.toLowerCase() + '.' + pcls[0] + ' ' + tag;
+      try {
+        var tag = el.tagName ? el.tagName.toLowerCase() : '';
+        var parts = classesOf(el);
+        if (parts.length > 0) {
+          parts.sort(function(a,b){return b.length - a.length});
+          return tag + '.' + parts[0];
         }
-        node = node.parentElement;
-        depth++;
+        var node = el.parentElement;
+        var depth = 0;
+        while (node && node !== document.body && depth < 4) {
+          var pcls = classesOf(node);
+          if (pcls.length > 0) {
+            pcls.sort(function(a,b){return b.length - a.length});
+            return node.tagName.toLowerCase() + '.' + pcls[0] + ' ' + tag;
+          }
+          node = node.parentElement;
+          depth++;
+        }
+        return tag;
+      } catch(e) { return ''; }
+    }
+
+    // H1
+    safe(function(){
+      var h1 = document.querySelector('h1');
+      if (h1) out.h1 = buildSelector(h1);
+    }, 'h1');
+
+    // Poster — самый большой <img>, не data:, не dot.gif, размер >= 100
+    safe(function(){
+      var bestImg = null, bestArea = 0;
+      var imgs = document.querySelectorAll('img');
+      for (var i = 0; i < imgs.length; i++) {
+        var im = imgs[i];
+        var w = 0, h = 0;
+        try { w = im.naturalWidth || im.clientWidth || 0; } catch(e) {}
+        try { h = im.naturalHeight || im.clientHeight || 0; } catch(e) {}
+        var src = '';
+        try { src = im.getAttribute('src') || im.getAttribute('data-src') || ''; } catch(e) {}
+        if (!src || src.indexOf('dot.gif') !== -1 || src.indexOf('data:') === 0) continue;
+        if (w < 100 && h < 100) continue;
+        var area = w * h;
+        if (area > bestArea) { bestArea = area; bestImg = im; }
       }
-      return tag;
-    }
+      if (bestImg) out.poster = buildSelector(bestImg);
+    }, 'poster');
 
-    var h1 = document.querySelector('h1');
-    if (h1) out.h1 = buildSelector(h1);
-
-    var bestImg = null, bestArea = 0;
-    var imgs = document.querySelectorAll('img');
-    for (var i = 0; i < imgs.length; i++) {
-      var im = imgs[i];
-      var w = im.naturalWidth || im.clientWidth || 0;
-      var h = im.naturalHeight || im.clientHeight || 0;
-      var src = im.getAttribute('src') || im.getAttribute('data-src') || '';
-      if (!src || src.indexOf('dot.gif') !== -1 || src.indexOf('data:') === 0) continue;
-      if (w < 100 && h < 100) continue;
-      var area = w * h;
-      if (area > bestArea) { bestArea = area; bestImg = im; }
-    }
-    if (bestImg) out.poster = buildSelector(bestImg);
-
-    function isInsideNoise(el) {
-      var node = el;
-      var depth = 0;
-      while (node && node !== document.body && depth < 8) {
-        var tag = node.tagName ? node.tagName.toLowerCase() : '';
-        if (tag === 'nav' || tag === 'footer' || tag === 'aside' || tag === 'script' || tag === 'style') return true;
-        var cls = String(node.className || '').toLowerCase();
-        if (cls.indexOf('sidebar') !== -1 || cls.indexOf('footer') !== -1 ||
-            cls.indexOf('menu') !== -1 || cls.indexOf('nav') !== -1) return true;
-        node = node.parentElement;
-        depth++;
+    // Description — самый длинный текстовый блок, не в sidebar/nav/footer
+    safe(function(){
+      function isInsideNoise(el) {
+        var node = el;
+        var depth = 0;
+        while (node && node !== document.body && depth < 8) {
+          var tag = node.tagName ? node.tagName.toLowerCase() : '';
+          if (tag === 'nav' || tag === 'footer' || tag === 'aside' || tag === 'script' || tag === 'style') return true;
+          var cls = '';
+          try { cls = String(node.className || '').toLowerCase(); } catch(e) {}
+          if (cls.indexOf('sidebar') !== -1 || cls.indexOf('footer') !== -1 ||
+              cls.indexOf('menu') !== -1 || cls.indexOf('nav') !== -1) return true;
+          node = node.parentElement;
+          depth++;
+        }
+        return false;
       }
-      return false;
-    }
-    var bestDesc = null, bestLen = 0;
-    var cands = document.querySelectorAll('div, p, article, section');
-    for (var i = 0; i < cands.length; i++) {
-      var el = cands[i];
-      var fullText = (el.textContent || '').trim();
-      if (fullText.length < 200) continue;
-      if (fullText.length > 5000) continue;
-      if (isInsideNoise(el)) continue;
-      var cls = String(el.className || '').toLowerCase();
-      var score = fullText.length;
-      if (cls.indexOf('descr') !== -1 || cls.indexOf('filmdescr') !== -1) score += 5000;
-      if (score > bestLen) { bestLen = score; bestDesc = el; }
-    }
-    if (bestDesc) out.description = buildSelector(bestDesc);
-
-    var allB = document.querySelectorAll('b, strong');
-    for (var i = 0; i < allB.length; i++) {
-      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
-      if (t === 'актеры' || t === 'в ролях') {
-        var container = allB[i].parentElement;
-        if (container) out.actorsContainer = buildSelector(container);
-        break;
+      var bestDesc = null, bestLen = 0;
+      var cands = document.querySelectorAll('div, p, article, section');
+      for (var i = 0; i < cands.length; i++) {
+        var el = cands[i];
+        var fullText = '';
+        try { fullText = (el.textContent || '').trim(); } catch(e) { continue; }
+        if (fullText.length < 200) continue;
+        if (fullText.length > 5000) continue;
+        if (isInsideNoise(el)) continue;
+        var cls = '';
+        try { cls = String(el.className || '').toLowerCase(); } catch(e) {}
+        var score = fullText.length;
+        if (cls.indexOf('descr') !== -1 || cls.indexOf('filmdescr') !== -1) score += 5000;
+        if (score > bestLen) { bestLen = score; bestDesc = el; }
       }
-    }
+      if (bestDesc) out.description = buildSelector(bestDesc);
+    }, 'description');
 
-    var infoLabels = ['год выпуска', 'страна', 'жанр'];
-    for (var i = 0; i < allB.length; i++) {
-      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
-      if (infoLabels.indexOf(t) !== -1) {
-        var container = allB[i].closest('span, div, li, p');
-        if (container) {
-          var parent = container.parentElement;
-          if (parent) out.infoSpans = buildSelector(parent) + ' > ' + buildSelector(container);
-          else out.infoSpans = buildSelector(container);
+    // Actors / infoSpans / fDop — обходим <b>/<strong>
+    safe(function(){
+      var allB = document.querySelectorAll('b, strong');
+      var infoLabels = ['год выпуска', 'страна', 'жанр'];
+      var fDopLabels = ['качество', 'длительность', 'перевод', 'озвучка'];
+      var actorsFound = false;
+      var infoFound = false;
+      var fDopFound = false;
+
+      for (var i = 0; i < allB.length; i++) {
+        var t = '';
+        try { t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase().trim(); } catch(e) { continue; }
+        if (!t) continue;
+
+        if (!actorsFound && (t === 'актеры' || t === 'в ролях')) {
+          var container = allB[i].parentElement;
+          if (container) {
+            out.actorsContainer = buildSelector(container);
+            actorsFound = true;
+          }
+        }
+
+        if (!infoFound && infoLabels.indexOf(t) !== -1) {
+          var c2 = allB[i].parentElement;
+          if (c2) {
+            var parent = c2.parentElement;
+            if (parent) out.infoSpans = buildSelector(parent) + ' > ' + buildSelector(c2);
+            else out.infoSpans = buildSelector(c2);
+            infoFound = true;
+          }
+        }
+
+        if (!fDopFound && fDopLabels.indexOf(t) !== -1) {
+          var c3 = allB[i].parentElement;
+          if (c3) {
+            var parent2 = c3.parentElement;
+            if (parent2) out.fDop = buildSelector(parent2) + ' > ' + buildSelector(c3);
+            else out.fDop = buildSelector(c3);
+            fDopFound = true;
+          }
+        }
+
+        if (actorsFound && infoFound && fDopFound) break;
+      }
+    }, 'bLabels');
+
+    // playersTabs — первый [data-src]
+    safe(function(){
+      var tabs = document.querySelectorAll('[data-src]');
+      if (tabs.length > 0) {
+        out.playersTabs = buildSelector(tabs[0]);
+      }
+    }, 'tabs');
+
+    // playersContainer — iframe с известным хостом плеера
+    safe(function(){
+      var ifr = document.querySelectorAll('iframe');
+      for (var i = 0; i < ifr.length; i++) {
+        var src = '';
+        try { src = (ifr[i].getAttribute('src') || '').toLowerCase(); } catch(e) { continue; }
+        if (src.indexOf('cinemar') !== -1 || src.indexOf('kodik') !== -1 ||
+            src.indexOf('alloha') !== -1 || src.indexOf('videocdn') !== -1 ||
+            src.indexOf('bazon') !== -1 || src.indexOf('sibnet') !== -1) {
+          out.playersContainer = buildSelector(ifr[i]);
           break;
         }
       }
-    }
+    }, 'iframe');
 
-    for (var i = 0; i < allB.length; i++) {
-      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
-      if (t === 'качество' || t === 'длительность' || t === 'перевод') {
-        var container = allB[i].parentElement;
-        if (container) {
-          var parent2 = container.parentElement;
-          if (parent2) out.fDop = buildSelector(parent2) + ' > ' + buildSelector(container);
-          else out.fDop = buildSelector(container);
-          break;
+    // Related — контейнер с наибольшим числом ссылок /NNN-slug.html
+    safe(function(){
+      var relMap = {};
+      var allLinks = document.querySelectorAll('a[href]');
+      for (var i = 0; i < allLinks.length; i++) {
+        var h = '';
+        try { h = allLinks[i].getAttribute('href') || ''; } catch(e) { continue; }
+        if (!/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) continue;
+        var node = allLinks[i].parentElement;
+        var depth = 0;
+        while (node && node !== document.body && depth < 5) {
+          if (!relMap[node]) relMap[node] = 0;
+          relMap[node]++;
+          node = node.parentElement;
+          depth++;
         }
       }
-    }
-
-    var tabs = document.querySelectorAll('li[data-src], [data-src]');
-    if (tabs.length > 0) {
-      out.playersTabs = buildSelector(tabs[0]);
-    }
-    var ifr = document.querySelectorAll('iframe');
-    for (var i = 0; i < ifr.length; i++) {
-      var src = (ifr[i].getAttribute('src') || '').toLowerCase();
-      if (src.indexOf('cinemar') !== -1 || src.indexOf('kodik') !== -1 ||
-          src.indexOf('alloha') !== -1 || src.indexOf('videocdn') !== -1) {
-        out.playersContainer = buildSelector(ifr[i]);
-        break;
+      var bestRel = null, bestRelCount = 0;
+      for (var k in relMap) {
+        if (relMap[k] > bestRelCount && relMap[k] >= 3) {
+          bestRelCount = relMap[k];
+          bestRel = k;
+        }
       }
-    }
-
-    var relMap = {};
-    var allLinks = document.querySelectorAll('a[href]');
-    for (var i = 0; i < allLinks.length; i++) {
-      var h = allLinks[i].getAttribute('href') || '';
-      if (!/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) continue;
-      var node = allLinks[i].parentElement;
-      var depth = 0;
-      while (node && node !== document.body && depth < 5) {
-        var key = node;
-        if (!relMap[key]) relMap[key] = 0;
-        relMap[key]++;
-        node = node.parentElement;
-        depth++;
-      }
-    }
-    var bestRel = null, bestRelCount = 0;
-    for (var k in relMap) {
-      if (relMap[k] > bestRelCount && relMap[k] >= 3) {
-        bestRelCount = relMap[k];
-        bestRel = k;
-      }
-    }
-    if (bestRel) out.related = buildSelector(bestRel) + ' a';
+      if (bestRel) out.related = buildSelector(bestRel) + ' a';
+    }, 'related');
 
     return JSON.stringify(out);
     })();
@@ -808,7 +856,6 @@ final class ProfileInferencer: NSObject {
 
 extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        // без логирования
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
