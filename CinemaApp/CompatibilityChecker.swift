@@ -120,6 +120,7 @@ enum CompatibilityChecker {
                                 detail: "HTTP \(http.statusCode)"))
 
             let html = String(data: data ?? Data(), encoding: .utf8) ?? ""
+            let htmlLower = html.lowercased()
 
             // ---- URL-паттерн карточек ----
             var foundMoviePath: String? = nil
@@ -138,32 +139,32 @@ enum CompatibilityChecker {
                 checks.append(.init(name: "URL карточек", status: .warn, detail: "Невалидная регулярка"))
             }
 
-            // ---- Класс карточки каталога ----
+            // ---- Каталог: класс карточки (регистронезависимо) ----
             let cardClasses = extractClasses(from: profile.catalogCard)
             if !cardClasses.isEmpty {
-                let found = cardClasses.first { html.contains($0) }
+                let found = cardClasses.first { htmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Каталог: класс (\(cardClasses.prefix(3).joined(separator: ", ")))",
                                     status: found != nil ? .ok : .fail,
                                     detail: found != nil ? "Найден: \(found!)" : "Не найден в HTML главной"))
             }
 
-            // ---- Title-link и poster-img селекторы ----
+            // ---- Title-link и poster-img (регистронезависимо) ----
             let titleClasses = extractClasses(from: profile.catalogTitleLink)
             if !titleClasses.isEmpty {
-                let found = titleClasses.first { html.contains($0) }
+                let found = titleClasses.first { htmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Каталог: title (\(titleClasses.prefix(2).joined(separator: ", ")))",
                                     status: found != nil ? .ok : .warn,
                                     detail: found != nil ? "Найден: \(found!)" : "Не найден"))
             }
             let posterClasses = extractClasses(from: profile.catalogPosterImg)
             if !posterClasses.isEmpty {
-                let found = posterClasses.first { html.contains($0) }
+                let found = posterClasses.first { htmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Каталог: poster (\(posterClasses.prefix(2).joined(separator: ", ")))",
                                     status: found != nil ? .ok : .warn,
                                     detail: found != nil ? "Найден: \(found!)" : "Не найден"))
             }
 
-            // ---- Идём на детальную ----
+            // ---- Детальная ----
             guard let path = foundMoviePath,
                   let movieURL = URL(string: "https://\(host)\(path.hasPrefix("/") ? path : "/\(path)")") else {
                 completion(CompatReport(host: host, profileSource: profileSource, checks: checks))
@@ -185,53 +186,47 @@ enum CompatibilityChecker {
                                     detail: "HTTP \(detailStatus)"))
 
                 let dhtml = String(data: ddata ?? Data(), encoding: .utf8) ?? ""
+                let dhtmlLower = dhtml.lowercased()
 
-                // JSON-LD Movie
-                let hasJSONLD = dhtml.contains("\"@type\"") && dhtml.contains("Movie")
+                let hasJSONLD = dhtmlLower.contains("\"@type\"") && dhtmlLower.contains("movie")
                 checks.append(.init(name: "JSON-LD Movie",
                                     status: hasJSONLD ? .ok : .warn,
                                     detail: hasJSONLD ? "Найден" : "Нет (fallback на HTML)"))
 
-                // H1
                 let h1Classes = extractClasses(from: profile.detailH1)
-                let hasH1 = dhtml.contains("<h1") || h1Classes.contains { dhtml.contains($0) }
+                let hasH1 = dhtmlLower.contains("<h1") || h1Classes.contains { dhtmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Детальная: H1",
                                     status: hasH1 ? .ok : .warn,
                                     detail: hasH1 ? "Есть" : "Нет"))
 
-                // Poster
                 let posterClasses2 = extractClasses(from: profile.detailPosterImg)
-                let hasPoster = posterClasses2.contains { dhtml.contains($0) }
+                let hasPoster = posterClasses2.contains { dhtmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Детальная: постер (\(posterClasses2.prefix(2).joined(separator: ", ")))",
                                     status: hasPoster ? .ok : .warn,
                                     detail: hasPoster ? "Есть" : "Нет"))
 
-                // Актёры
                 let actorClasses = extractClasses(from: profile.detailActorsContainer)
-                let hasCast = actorClasses.contains { dhtml.contains($0) }
+                let hasCast = actorClasses.contains { dhtmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Актёры (\(actorClasses.prefix(2).joined(separator: ", ")))",
                                     status: hasCast ? .ok : .fail,
                                     detail: hasCast ? "Есть" : "Нет"))
 
-                // Описание
                 let descClasses = extractClasses(from: profile.detailDescription)
-                let hasDescription = descClasses.contains { dhtml.contains($0) }
+                let hasDescription = descClasses.contains { dhtmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Описание (\(descClasses.prefix(2).joined(separator: ", ")))",
                                     status: hasDescription ? .ok : .warn,
                                     detail: hasDescription ? "Есть" : "Нет"))
 
-                // Рекомендации
                 let relatedClasses = extractClasses(from: profile.detailRelated)
-                let hasRelated = relatedClasses.contains { dhtml.contains($0) }
+                let hasRelated = relatedClasses.contains { dhtmlLower.contains($0.lowercased()) }
                 checks.append(.init(name: "Рекомендации (\(relatedClasses.prefix(2).joined(separator: ", ")))",
                                     status: hasRelated ? .ok : .warn,
                                     detail: hasRelated ? "Есть" : "Нет"))
 
-                // Плеер — по playerHosts
                 var playerFound = false
                 var playerHostFound = ""
                 for ph in profile.playerHosts {
-                    if dhtml.lowercased().contains(ph) {
+                    if dhtmlLower.contains(ph.lowercased()) {
                         playerFound = true
                         playerHostFound = ph
                         break
@@ -241,9 +236,8 @@ enum CompatibilityChecker {
                                     status: playerFound ? .ok : .fail,
                                     detail: playerFound ? "Найден: \(playerHostFound)" : "Нет"))
 
-                // Плеер-табы
                 let tabsClasses = extractClasses(from: profile.detailPlayersTabs)
-                let hasTabs = tabsClasses.contains { dhtml.contains($0) } || dhtml.contains("data-src")
+                let hasTabs = tabsClasses.contains { dhtmlLower.contains($0.lowercased()) } || dhtmlLower.contains("data-src")
                 checks.append(.init(name: "Плеер-табы / data-src",
                                     status: hasTabs ? .ok : .warn,
                                     detail: hasTabs ? "Есть" : "Нет"))
