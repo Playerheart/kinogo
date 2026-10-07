@@ -1,0 +1,341 @@
+import SwiftUI
+
+struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var hostInput: String = AppConfig.host
+    @State private var debugTitle: String = ""
+    @State private var debugMessage: String = ""
+    @State private var showDebug = false
+
+    @State private var redirectHost: String? = nil
+    @State private var compatReport: CompatReport? = nil
+    @State private var isCheckingRedirect = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Адрес сайта") {
+                    TextField("mix.kinogo.mu", text: $hostInput)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+
+                    Button {
+                        AppConfig.host = hostInput
+                        NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                        dismiss()
+                    } label: {
+                        Label("Сохранить", systemImage: "checkmark")
+                    }
+                    .disabled(hostInput.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                    Button(role: .destructive) {
+                        AppConfig.resetToDefault()
+                        hostInput = AppConfig.defaultHost
+                        NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                    } label: {
+                        Label("Сбросить на \(AppConfig.defaultHost)", systemImage: "arrow.counterclockwise")
+                    }
+                }
+
+                Section("Диагностика") {
+                    Button {
+                        runNetworkDiagnostics()
+                    } label: {
+                        Label("Проверить сеть", systemImage: "stethoscope")
+                    }
+
+                    Button {
+                        checkRedirect()
+                    } label: {
+                        HStack {
+                            Label("Проверить переадресацию", systemImage: "arrow.triangle.branch")
+                            if isCheckingRedirect {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isCheckingRedirect)
+                }
+
+                Section("Текущий конфиг") {
+                    HStack {
+                        Text("Хост")
+                        Spacer()
+                        Text(AppConfig.host).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Referer")
+                        Spacer()
+                        Text(AppConfig.referer)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                       let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String {
+                        HStack {
+                            Text("Версия")
+                            Spacer()
+                            Text("\(v) (build \(b))").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Настройки")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Готово") { dismiss() }
+                }
+            }
+            .overlay {
+                if showDebug {
+                    debugOverlay
+                }
+            }
+            .overlay {
+                if let report = compatReport {
+                    compatOverlay(report: report)
+                }
+            }
+        }
+    }
+
+    // MARK: - Диагностика сети
+
+    private var debugOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.9).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 16) {
+                Text(debugTitle)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+
+                ScrollView {
+                    Text(debugMessage)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 420)
+                .padding(10)
+                .background(Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                Button {
+                    showDebug = false
+                } label: {
+                    Text("Закрыть")
+                        .font(.subheadline).bold()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                }
+            }
+            .padding(20)
+            .background(Color(white: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(24)
+        }
+    }
+
+    // MARK: - Отчёт о совместимости
+
+    private func compatOverlay(report: CompatReport) -> some View {
+        ZStack {
+            Color.black.opacity(0.92).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 14) {
+
+                Text(report.verdictTitle)
+                    .font(.headline)
+                    .foregroundStyle(verdictColor(report.verdict))
+
+                Text("Хост: \(report.host)")
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.7))
+
+                Text(report.verdictMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ScrollView {
+                    Text(report.detailsText)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 300)
+                .padding(10)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                HStack(spacing: 10) {
+                    Button {
+                        compatReport = nil
+                    } label: {
+                        Text("Отмена")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.15))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+
+                    Button {
+                        if let rh = redirectHost {
+                            AppConfig.host = rh
+                            hostInput = rh
+                            NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                        }
+                        compatReport = nil
+                        redirectHost = nil
+                        dismiss()
+                    } label: {
+                        Text("Переключиться")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(report.verdict == .incompatible ? Color.red : Color.blue)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(20)
+            .background(Color(white: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(24)
+        }
+    }
+
+    private func verdictColor(_ v: CompatReport.Verdict) -> Color {
+        switch v {
+        case .full:         return .green
+        case .partial:      return .yellow
+        case .incompatible: return .red
+        }
+    }
+
+    // MARK: - Функции
+
+    private func runNetworkDiagnostics() {
+        debugTitle = "Диагностика сети"
+        debugMessage = "▶ Тестирую три URL…"
+        showDebug = true
+
+        var results: [String] = []
+        let lock = NSLock()
+        let group = DispatchGroup()
+
+        let tests: [(String, URL, Bool)] = [
+            ("google.com",       URL(string: "https://www.google.com/")!, false),
+            (AppConfig.host,     AppConfig.baseURL,                     false),
+            ("host.cinemap.cc",  URL(string: "https://host.cinemap.cc/")!, true)
+        ]
+
+        for (name, testURL, showBody) in tests {
+            group.enter()
+            var req = URLRequest(url: testURL,
+                                 cachePolicy: .reloadIgnoringLocalCacheData,
+                                 timeoutInterval: 8)
+            req.setValue(AppConfig.referer, forHTTPHeaderField: "Referer")
+            req.setValue(AppConfig.origin,  forHTTPHeaderField: "Origin")
+            let start = Date()
+            URLSession.shared.dataTask(with: req) { data, response, error in
+                let elapsed = String(format: "%.2f", Date().timeIntervalSince(start))
+                var line: String
+                if let err = error as NSError? {
+                    line = "\(name)  ❌  \(elapsed)с\n   \(err.domain)#\(err.code)\n   \(err.localizedDescription)"
+                } else if let http = response as? HTTPURLResponse {
+                    let mime = http.mimeType ?? "?"
+                    let len = data?.count ?? 0
+                    var block = "\(name)  ✅  \(elapsed)с\n   HTTP \(http.statusCode)  \(len) б  \(mime)"
+                    if showBody, let d = data {
+                        let preview = String(data: d.prefix(300), encoding: .utf8) ?? "<бинарные данные>"
+                        block += "\n\n   ПРЕВЬЮ:\n\(preview)"
+                    }
+                    line = block
+                } else {
+                    line = "\(name)  ?  \(elapsed)с  нет ответа"
+                }
+                lock.lock()
+                results.append(line)
+                let snapshot = results.sorted().joined(separator: "\n\n")
+                lock.unlock()
+                DispatchQueue.main.async {
+                    self.debugMessage = "▶ Завершено: \(results.count) / 3\n\n\(snapshot)"
+                }
+                group.leave()
+            }.resume()
+        }
+    }
+
+    private func checkRedirect() {
+        isCheckingRedirect = true
+
+        var req = URLRequest(url: AppConfig.baseURL,
+                             cachePolicy: .reloadIgnoringLocalCacheData,
+                             timeoutInterval: 12)
+        req.httpMethod = "GET"
+        req.setValue(AppConfig.referer, forHTTPHeaderField: "Referer")
+        req.setValue(AppConfig.origin,  forHTTPHeaderField: "Origin")
+
+        URLSession.shared.dataTask(with: req) { _, response, error in
+            DispatchQueue.main.async {
+                self.isCheckingRedirect = false
+
+                if let err = error as NSError? {
+                    self.debugTitle = "Переадресация"
+                    self.debugMessage = """
+                    ❌ Ошибка проверки
+                    \(err.domain)#\(err.code)
+                    \(err.localizedDescription)
+                    """
+                    self.showDebug = true
+                    return
+                }
+                guard let finalURL = response?.url else {
+                    self.debugTitle = "Переадресация"
+                    self.debugMessage = "Не удалось получить финальный URL"
+                    self.showDebug = true
+                    return
+                }
+                let finalHost = finalURL.host ?? ""
+                let currentHost = AppConfig.host
+
+                if finalHost.isEmpty || finalHost == currentHost {
+                    self.debugTitle = "Переадресация"
+                    self.debugMessage = """
+                    ✅ Переадресации нет
+
+                    Адрес: \(currentHost)
+                    Финальный: \(finalHost.isEmpty ? "—" : finalHost)
+                    """
+                    self.showDebug = true
+                    return
+                }
+
+                self.redirectHost = finalHost
+                self.debugTitle = "Проверка совместимости"
+                self.debugMessage = "▶ Анализирую \(finalHost)…"
+                self.showDebug = true
+
+                CompatibilityChecker.check(host: finalHost) { report in
+                    DispatchQueue.main.async {
+                        self.showDebug = false
+                        self.compatReport = report
+                    }
+                }
+            }
+        }.resume()
+    }
+}
