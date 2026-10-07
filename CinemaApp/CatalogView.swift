@@ -3,17 +3,19 @@ import SwiftUI
 enum CatalogSection: String, CaseIterable, Identifiable {
     case films = "Фильмы"
     case news = "Новинки"
-    case top = "Топ"
     case series = "Сериалы"
+    case multfilms = "Мультфильмы"
+    case anime = "Аниме"
 
     var id: String { rawValue }
 
     var path: String {
         switch self {
-        case .films: return "filmy/"
-        case .news: return "v1new/"
-        case .top: return "top-filmy/"
-        case .series: return "serialy/"
+        case .films:     return "filmy/"
+        case .news:      return "novinki/"
+        case .series:    return "serialy/"
+        case .multfilms: return "multfilmy/"
+        case .anime:     return "anime/"
         }
     }
 
@@ -130,7 +132,7 @@ struct CatalogView: View {
         do {
             let json = try await SiteParser.shared.extract(
                 from: url,
-                js: ExtractionScripts.catalog,
+                js: ExtractionScripts.catalog(baseHost: AppConfig.host),
                 waitAfterLoad: 3.0
             )
             if Task.isCancelled { return }
