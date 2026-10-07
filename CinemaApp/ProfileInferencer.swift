@@ -8,17 +8,15 @@ struct InferenceResult {
     let log: String
 }
 
-@MainActor
 final class ProfileInferencer: NSObject {
     static let shared = ProfileInferencer()
 
-    private var webView: WKWebView!
+    private var webView: WKWebView?
     private var completion: ((InferenceResult?) -> Void)?
     private var host: String = ""
     private var isDone = false
     private var diagLog: [String] = []
 
-    // Очередь страниц для инференса: сначала каталоги, потом главная как fallback.
     private var urlQueue: [URL] = []
     private var currentIdx = 0
     private var currentPageLabel: String = ""
@@ -28,53 +26,60 @@ final class ProfileInferencer: NSObject {
         let url: URL
         let profile: SiteProfile
         let count: Int
-        let candidates: [[String: Any]]
     }
     private var pageResults: [PageResult] = []
 
     private override init() {
         super.init()
+    }
+
+    private func setupWebViewIfNeeded() {
+        guard webView == nil else { return }
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-
-        webView = WKWebView(frame: .zero, configuration: config)
-        webView.navigationDelegate = self
-        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.navigationDelegate = self
+        wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        self.webView = wv
     }
 
     func infer(host: String, completion: @escaping (InferenceResult?) -> Void) {
-        self.host = host
-        self.completion = completion
-        self.isDone = false
-        self.diagLog = []
-        self.pageResults = []
+        DispatchQueue.main.async {
+            self.setupWebViewIfNeeded()
 
-        let candidates: [(String, String)] = [
-            ("filmy/", "Фильмы"),
-            ("movies/", "Фильмы (alt)"),
-            ("films/", "Фильмы (alt2)"),
-            ("serialy/", "Сериалы"),
-            ("novinki/", "Новинки"),
-            ("", "Главная")
-        ]
+            self.host = host
+            self.completion = completion
+            self.isDone = false
+            self.diagLog = []
+            self.pageResults = []
 
-        var urls: [URL] = []
-        for (path, _) in candidates {
-            if let u = URL(string: "https://\(host)/\(path)") {
-                urls.append(u)
+            let candidates: [(String, String)] = [
+                ("filmy/", "Фильмы"),
+                ("movies/", "Фильмы (alt)"),
+                ("films/", "Фильмы (alt2)"),
+                ("serialy/", "Сериалы"),
+                ("novinki/", "Новинки"),
+                ("", "Главная")
+            ]
+
+            var urls: [URL] = []
+            for (path, _) in candidates {
+                if let u = URL(string: "https://\(host)/\(path)") {
+                    urls.append(u)
+                }
             }
-        }
-        self.urlQueue = urls
-        self.currentIdx = 0
+            self.urlQueue = urls
+            self.currentIdx = 0
 
-        log("Хост: \(host)")
-        log("Буду проверять страницы: \(candidates.map { $0.0.isEmpty ? "(главная)" : $0.0 }.joined(separator: ", "))")
+            self.log("Хост: \(host)")
+            self.log("Буду проверять: \(candidates.map { $0.0.isEmpty ? "(главная)" : $0.0 }.joined(separator: ", "))")
 
-        loadNextPage()
+            self.loadNextPage()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
-            guard let self = self, !self.isDone else { return }
-            self.finishFailure(reason: "Таймаут 90 секунд")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
+                guard let self = self, !self.isDone else { return }
+                self.finishFailure(reason: "Таймаут 90 секунд")
+            }
         }
     }
 
@@ -82,6 +87,10 @@ final class ProfileInferencer: NSObject {
         guard !isDone else { return }
         guard currentIdx < urlQueue.count else {
             finalize()
+            return
+        }
+        guard let webView = webView else {
+            finishFailure(reason: "WebView потерян")
             return
         }
         let url = urlQueue[currentIdx]
@@ -101,8 +110,9 @@ final class ProfileInferencer: NSObject {
         guard !isDone else { return }
         isDone = true
         log("❌ \(reason)")
-        completion?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
+        let cb = completion
         completion = nil
+        cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
     }
 
     private func finalize() {
@@ -111,8 +121,9 @@ final class ProfileInferencer: NSObject {
 
         guard let best = pageResults.max(by: { $0.count < $1.count }) else {
             log("❌ Ни одна страница не дала кандидатов")
-            completion?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
+            let cb = completion
             completion = nil
+            cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
             return
         }
 
@@ -125,14 +136,15 @@ final class ProfileInferencer: NSObject {
         log("  poster = \(best.profile.catalogPosterImg)")
         log("  rating = \(best.profile.catalogRating)")
 
-        completion?(InferenceResult(host: host, profile: best.profile, movieCount: best.count, log: logString()))
+        let cb = completion
         completion = nil
+        cb?(InferenceResult(host: host, profile: best.profile, movieCount: best.count, log: logString()))
     }
 
     // MARK: - Анализ текущей страницы
 
     private func analyze() {
-        guard !isDone else { return }
+        guard !isDone, let webView = webView else { return }
         log("  Анализирую DOM…")
 
         webView.evaluateJavaScript(ProfileInferencer.collectorJS) { [weak self] result, error in
@@ -167,7 +179,8 @@ final class ProfileInferencer: NSObject {
             }
             self.log("  Кандидатов: \(candidates.count)")
 
-            self.validateCandidates(candidates, pageURL: self.webView.url ?? URL(string: "https://\(self.host)/")!)
+            let pageURL = webView.url ?? URL(string: "https://\(self.host)/")!
+            self.validateCandidates(candidates, pageURL: pageURL)
         }
     }
 
@@ -184,10 +197,8 @@ final class ProfileInferencer: NSObject {
                         label: self.currentPageLabel,
                         url: pageURL,
                         profile: b.profile,
-                        count: b.count,
-                        candidates: candidates
+                        count: b.count
                     ))
-                    // Ранний выход: если нашли ≥50 карточек на первом каталоге — дальше смысла нет
                     if b.count >= 50 && self.currentIdx == 0 {
                         self.log("  Ранний выход (достаточно карточек)")
                         self.finalize()
@@ -202,12 +213,13 @@ final class ProfileInferencer: NSObject {
             }
 
             let cand = candidates[idx]; idx += 1
-            let profile = buildProfile(from: cand)
+            let profile = self.buildProfile(from: cand)
             let cardClass = (cand["cardClass"] as? String) ?? "?"
             let titleSel = (cand["titleSelector"] as? String) ?? ""
             let posterSel = (cand["posterSelector"] as? String) ?? ""
             let js = ExtractionScripts.catalog(profile: profile)
 
+            guard let webView = self.webView else { return }
             webView.evaluateJavaScript(js) { [weak self] res, _ in
                 guard let self = self, !self.isDone else { return }
                 var count = 0
@@ -374,7 +386,7 @@ final class ProfileInferencer: NSObject {
 
 extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        // не логируем, чтобы не засорять
+        // без логирования
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !isDone else { return }
