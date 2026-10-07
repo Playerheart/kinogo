@@ -10,7 +10,7 @@ struct SettingsView: View {
 
     @State private var redirectHost: String? = nil
     @State private var compatReport: CompatReport? = nil
-    @State private var isCheckingRedirect = false
+    @State private var isChecking = false
 
     var body: some View {
         NavigationStack {
@@ -22,13 +22,17 @@ struct SettingsView: View {
                         .keyboardType(.URL)
 
                     Button {
-                        AppConfig.host = hostInput
-                        NotificationCenter.default.post(name: .appConfigChanged, object: nil)
-                        dismiss()
+                        saveTapped()
                     } label: {
-                        Label("Сохранить", systemImage: "checkmark")
+                        HStack {
+                            Label("Сохранить", systemImage: "checkmark")
+                            if isChecking {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
                     }
-                    .disabled(hostInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(hostInput.trimmingCharacters(in: .whitespaces).isEmpty || isChecking)
 
                     Button(role: .destructive) {
                         AppConfig.resetToDefault()
@@ -37,6 +41,7 @@ struct SettingsView: View {
                     } label: {
                         Label("Сбросить на \(AppConfig.defaultHost)", systemImage: "arrow.counterclockwise")
                     }
+                    .disabled(isChecking)
                 }
 
                 Section("Диагностика") {
@@ -45,19 +50,20 @@ struct SettingsView: View {
                     } label: {
                         Label("Проверить сеть", systemImage: "stethoscope")
                     }
+                    .disabled(isChecking)
 
                     Button {
                         checkRedirect()
                     } label: {
                         HStack {
                             Label("Проверить переадресацию", systemImage: "arrow.triangle.branch")
-                            if isCheckingRedirect {
+                            if isChecking {
                                 Spacer()
                                 ProgressView()
                             }
                         }
                     }
-                    .disabled(isCheckingRedirect)
+                    .disabled(isChecking)
                 }
 
                 Section("Текущий конфиг") {
@@ -102,6 +108,41 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Сохранение с проверкой
+
+    private func saveTapped() {
+        let clean = cleanHost(hostInput)
+
+        // Тот же хост — сохранять нечего, просто закрываем.
+        if clean == AppConfig.host {
+            dismiss()
+            return
+        }
+
+        // Другой хост — сначала проверяем совместимость.
+        isChecking = true
+        debugTitle = "Проверка совместимости"
+        debugMessage = "▶ Анализирую \(clean)…"
+        showDebug = true
+
+        CompatibilityChecker.check(host: clean) { report in
+            DispatchQueue.main.async {
+                self.isChecking = false
+                self.showDebug = false
+                self.redirectHost = clean
+                self.compatReport = report
+            }
+        }
+    }
+
+    private func cleanHost(_ raw: String) -> String {
+        return raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "https://", with: "")
+            .replacingOccurrences(of: "http://", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
     // MARK: - Диагностика сети
@@ -179,7 +220,10 @@ struct SettingsView: View {
 
                 HStack(spacing: 10) {
                     Button {
+                        // Отмена: ничего не сохраняем, откатываем поле ввода
                         compatReport = nil
+                        redirectHost = nil
+                        hostInput = AppConfig.host
                     } label: {
                         Text("Отмена")
                             .font(.subheadline).bold()
@@ -280,7 +324,7 @@ struct SettingsView: View {
     }
 
     private func checkRedirect() {
-        isCheckingRedirect = true
+        isChecking = true
 
         var req = URLRequest(url: AppConfig.baseURL,
                              cachePolicy: .reloadIgnoringLocalCacheData,
@@ -291,7 +335,7 @@ struct SettingsView: View {
 
         URLSession.shared.dataTask(with: req) { _, response, error in
             DispatchQueue.main.async {
-                self.isCheckingRedirect = false
+                self.isChecking = false
 
                 if let err = error as NSError? {
                     self.debugTitle = "Переадресация"
