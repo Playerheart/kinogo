@@ -2,7 +2,7 @@ import Foundation
 
 enum AppConfig {
     private static let hostKey = "AppConfig.host"
-    static let defaultHost = "mix.kinogo.mu"
+    static let defaultHost = "kinogo.family"
 
     static var host: String {
         get {
