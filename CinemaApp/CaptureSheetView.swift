@@ -184,7 +184,7 @@ struct CaptureSheetView: View {
 
         let tests: [(String, URL, Bool)] = [
             ("google.com",        URL(string: "https://www.google.com/")!, false),
-            ("mix.kinogo.mu",     URL(string: "https://mix.kinogo.mu/")!, false),
+            ("kinogo.family",     URL(string: "https://kinogo.family/")!, false),
             ("host.cinemap.cc",   url, true)
         ]
 
