@@ -143,6 +143,9 @@ struct ScopedWebView: UIViewRepresentable {
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
         context.coordinator.initialURL = url
+        // ФИКС (п.2): помечаем URL как загруженный, чтобы первый updateUIView
+        // не дёрнул повторную загрузку, пока uiView.url ещё nil.
+        context.coordinator.lastLoadedURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
