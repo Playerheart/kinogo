@@ -205,7 +205,13 @@ struct SettingsView: View {
             DispatchQueue.main.async {
                 self.isChecking = false
 
-                if let r = result {
+                guard let r = result else {
+                    self.debugTitle = "❌ Не удалось"
+                    self.debugMessage = "Инференсер не вернул результат."
+                    return
+                }
+
+                if r.movieCount > 0 {
                     AppConfig.cacheProfile(r.profile, for: r.host)
                     self.debugTitle = "✅ Профиль определён"
                     self.debugMessage = """
@@ -213,9 +219,6 @@ struct SettingsView: View {
                     Найдено фильмов: \(r.movieCount)
 
                     \(r.log)
-
-                    Профиль сохранён в памяти телефона.
-                    Каталог и карточки перезагрузятся автоматически.
                     """
                     NotificationCenter.default.post(name: .appConfigChanged, object: nil)
                 } else {
@@ -223,12 +226,8 @@ struct SettingsView: View {
                     self.debugMessage = """
                     Не получилось подобрать селекторы для \(targetHost).
 
-                    Возможные причины:
-                    • Сайт недоступен
-                    • Другая структура (не DLE)
-                    • Нет ссылок вида /NNN-slug.html
-
-                    Можно попробовать позже или править вручную.
+                    Лог:
+                    \(r.log)
                     """
                 }
             }
