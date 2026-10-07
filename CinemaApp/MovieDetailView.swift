@@ -62,6 +62,17 @@ struct MovieDetailView: View {
                     header
                     metaLine
 
+                    if let d = vm.detail, !d.season.isEmpty || !d.lastEpisode.isEmpty {
+                        let parts = [d.season, d.lastEpisode].filter { !$0.isEmpty }
+                        Text(parts.joined(separator: " / "))
+                            .font(.footnote).bold()
+                            .foregroundStyle(.white.opacity(0.85))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.25))
+                            .clipShape(Capsule())
+                    }
+
                     if vm.selectedPlayer != nil {
                         Button {
                             showPlayer = true
