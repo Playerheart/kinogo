@@ -25,7 +25,20 @@ struct SettingsView: View {
                         saveTapped()
                     } label: {
                         HStack {
-                            Label("Сохранить", systemImage: "checkmark")
+                            Label("Сохранить и переключиться", systemImage: "checkmark")
+                            if isChecking {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(hostInput.trimmingCharacters(in: .whitespaces).isEmpty || isChecking)
+
+                    Button {
+                        checkCompatibilityTapped()
+                    } label: {
+                        HStack {
+                            Label("Проверить совместимость", systemImage: "checkmark.shield")
                             if isChecking {
                                 Spacer()
                                 ProgressView()
@@ -184,6 +197,27 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Просто проверить совместимость (без переключения)
+
+    private func checkCompatibilityTapped() {
+        let clean = cleanHost(hostInput)
+        guard !clean.isEmpty else { return }
+
+        isChecking = true
+        debugTitle = "Проверка совместимости"
+        debugMessage = "▶ Анализирую \(clean)…"
+        showDebug = true
+
+        CompatibilityChecker.check(host: clean) { report in
+            DispatchQueue.main.async {
+                self.isChecking = false
+                self.showDebug = false
+                self.redirectHost = nil
+                self.compatReport = report
+            }
+        }
+    }
+
     private func cleanHost(_ raw: String) -> String {
         return raw
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -197,7 +231,7 @@ struct SettingsView: View {
     private func runInference() {
         isChecking = true
         debugTitle = "Определение профиля"
-        debugMessage = "▶ Открываю \(AppConfig.host)…\nОбычно занимает 10–20 секунд."
+        debugMessage = "▶ Открываю \(AppConfig.host)…\nОбычно занимает 30–60 секунд."
         showDebug = true
 
         let targetHost = AppConfig.host
@@ -305,6 +339,10 @@ struct SettingsView: View {
                     .font(.system(.footnote, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.7))
 
+                Text("Профиль: \(report.profileSource)")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.55))
+
                 Text(report.verdictMessage)
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.9))
@@ -316,19 +354,18 @@ struct SettingsView: View {
                         .foregroundStyle(.white.opacity(0.85))
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                 }
-                .frame(maxHeight: 300)
+                .frame(maxHeight: 320)
                 .padding(10)
                 .background(Color.white.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
                 HStack(spacing: 10) {
                     Button {
-                        compatReport = nil
-                        redirectHost = nil
-                        hostInput = AppConfig.host
+                        UIPasteboard.general.string = report.detailsText
                     } label: {
-                        Text("Отмена")
+                        Text("Скопировать")
                             .font(.subheadline).bold()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
@@ -337,21 +374,36 @@ struct SettingsView: View {
                             .clipShape(Capsule())
                     }
 
-                    Button {
-                        if let rh = redirectHost {
+                    if let rh = redirectHost {
+                        // Сценарий «Сохранить и переключиться» — показываем кнопку
+                        Button {
                             AppConfig.host = rh
                             hostInput = rh
                             NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                            compatReport = nil
+                            redirectHost = nil
+                            dismiss()
+                        } label: {
+                            Text("Переключиться")
+                                .font(.subheadline).bold()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(report.verdict == .incompatible ? Color.red : Color.blue)
+                                .foregroundStyle(.white)
+                                .clipShape(Capsule())
                         }
+                    }
+
+                    Button {
                         compatReport = nil
                         redirectHost = nil
-                        dismiss()
+                        hostInput = AppConfig.host
                     } label: {
-                        Text("Переключиться")
+                        Text("Закрыть")
                             .font(.subheadline).bold()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
-                            .background(report.verdict == .incompatible ? Color.red : Color.blue)
+                            .background(Color.blue)
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                     }
