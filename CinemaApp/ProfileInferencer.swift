@@ -55,8 +55,6 @@ final class ProfileInferencer: NSObject {
 
             let candidates: [(String, String)] = [
                 ("filmy/", "Фильмы"),
-                ("movies/", "Фильмы (alt)"),
-                ("films/", "Фильмы (alt2)"),
                 ("serialy/", "Сериалы"),
                 ("novinki/", "Новинки"),
                 ("", "Главная")
@@ -76,9 +74,9 @@ final class ProfileInferencer: NSObject {
 
             self.loadNextPage()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
                 guard let self = self, !self.isDone else { return }
-                self.finishFailure(reason: "Таймаут 90 секунд")
+                self.finishFailure(reason: "Таймаут 120 секунд")
             }
         }
     }
@@ -168,7 +166,9 @@ final class ProfileInferencer: NSObject {
 
             let movieLinksCount = (dict["movieLinksCount"] as? Int) ?? 0
             let pageTitle = (dict["title"] as? String) ?? "?"
+            let scrolled = (dict["scrolled"] as? Bool) ?? false
             self.log("  Заголовок: \(pageTitle)")
+            self.log("  Скроллилось: \(scrolled ? "да" : "нет")")
             self.log("  Ссылок /NNN-slug.html: \(movieLinksCount)")
 
             guard let candidates = dict["candidates"] as? [[String: Any]], !candidates.isEmpty else {
@@ -199,7 +199,8 @@ final class ProfileInferencer: NSObject {
                         profile: b.profile,
                         count: b.count
                     ))
-                    if b.count >= 50 && self.currentIdx == 0 {
+                    // Ранний выход только если >100 карточек — точно полный каталог
+                    if b.count >= 100 && self.currentIdx == 0 {
                         self.log("  Ранний выход (достаточно карточек)")
                         self.finishAllPages()
                         return
@@ -265,15 +266,57 @@ final class ProfileInferencer: NSObject {
         return s.contains(".") || s.contains(" ") || s.contains(">") || s.contains("[")
     }
 
-    // MARK: - JS: сбор кандидатов
+    // MARK: - JS: сбор кандидатов + скролл для lazy-load
 
     private static let collectorJS = """
     (function(){
-    var out = { url: location.href, title: document.title, movieLinksCount: 0, candidates: [] };
+    var out = { url: location.href, title: document.title, movieLinksCount: 0, candidates: [], scrolled: false };
 
+    function countMovieLinks() {
+      var links = document.querySelectorAll('a[href]');
+      var count = 0;
+      for (var i = 0; i < links.length; i++) {
+        var h = links[i].getAttribute('href') || '';
+        if (/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) count++;
+      }
+      return count;
+    }
+
+    // ---- Авто-скролл для срабатывания lazy-load ----
+    var scrolled = false;
+    try {
+      var before = countMovieLinks();
+      // Три итерации скролла вниз
+      window.scrollTo(0, document.body.scrollHeight * 0.5);
+      window.scrollTo(0, document.body.scrollHeight);
+      // Проскроллим каждый контейнер, у которого есть overflow
+      var potential = document.querySelectorAll('.shortStory, .sectBody, .mainWrap, [class*="lazy"]');
+      for (var i = 0; i < potential.length && i < 200; i++) {
+        try { potential[i].scrollIntoView(); } catch(e) {}
+      }
+      window.scrollTo(0, 0);
+      var after = countMovieLinks();
+      if (after > before) scrolled = true;
+    } catch(e) {}
+    out.scrolled = scrolled;
+
+    // Попытка кликнуть «Показать ещё» / «Загрузить ещё»
+    try {
+      var moreBtns = document.querySelectorAll('a, button');
+      for (var i = 0; i < moreBtns.length && i < 500; i++) {
+        var t = (moreBtns[i].textContent || '').toLowerCase();
+        if (t.indexOf('показать ещё') !== -1 || t.indexOf('загрузить ещё') !== -1 ||
+            t.indexOf('показать еще') !== -1 || t.indexOf('загрузить еще') !== -1 ||
+            t.indexOf('load more') !== -1) {
+          try { moreBtns[i].click(); } catch(e) {}
+        }
+      }
+    } catch(e) {}
+
+    // ---- Сбор карточек ----
     var movieLinks = [];
     var allLinks = document.querySelectorAll('a[href]');
-    for (var i = 0; i < allLinks.length && i < 5000; i++) {
+    for (var i = 0; i < allLinks.length && i < 10000; i++) {
       var h = allLinks[i].getAttribute('href') || '';
       if (/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) {
         movieLinks.push(allLinks[i]);
@@ -388,17 +431,32 @@ extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         // без логирования
     }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !isDone else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
-            self?.analyze()
+        // Даём странице прогрузиться, потом скроллим и снова ждём,
+        // потом уже собираем DOM. Так срабатывает lazy-load карточек.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            guard let self = self, !self.isDone else { return }
+            self.webView?.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);") { _, _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    guard let self = self, !self.isDone else { return }
+                    self.webView?.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);") { _, _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                            self?.analyze()
+                        }
+                    }
+                }
+            }
         }
     }
+
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         log("  ⚠️ Ошибка загрузки: \(error.localizedDescription)")
         currentIdx += 1
         loadNextPage()
     }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         log("  ⚠️ Ошибка provisional: \(error.localizedDescription)")
         currentIdx += 1
