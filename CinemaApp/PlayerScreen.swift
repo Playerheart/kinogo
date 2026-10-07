@@ -12,6 +12,13 @@ struct PlayerScreen: View {
     @State private var currentVoice: String? = nil
     @State private var pendingVoice: String? = nil
 
+    @State private var seasons: [String] = []
+    @State private var episodes: [String] = []
+    @State private var currentSeason: String? = nil
+    @State private var currentEpisode: String? = nil
+    @State private var pendingSeason: String? = nil
+    @State private var pendingEpisode: String? = nil
+
     @State private var capturedVideoURL: URL?
     @State private var showCaptureSheet = false
     @State private var lastCaptureTime: Date = .distantPast
@@ -19,13 +26,14 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
+    @State private var showCinemarDiag = false
+    @State private var cinemarDiagText = ""
+
     var body: some View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                // WKWebView: скрыт, но остаётся в иерархии — он источник
-                // всех запросов к cinemar. Через JS hunter ловит .mp4/.m3u8.
                 if let url = URL(string: player.url) {
                     RawPlayerWebView(
                         url: url,
@@ -47,14 +55,29 @@ struct PlayerScreen: View {
                             voices = list
                             if currentVoice == nil { currentVoice = list.first }
                         },
-                        pendingVoice: $pendingVoice
+                        onSeasonsDetected: { list in
+                            if list.isEmpty { return }
+                            seasons = list
+                            if currentSeason == nil { currentSeason = list.first }
+                        },
+                        onEpisodesDetected: { list in
+                            if list.isEmpty { return }
+                            episodes = list
+                            if currentEpisode == nil { currentEpisode = list.first }
+                        },
+                        onCinemarDiag: { text in
+                            cinemarDiagText = text
+                            showCinemarDiag = true
+                        },
+                        pendingVoice: $pendingVoice,
+                        pendingSeason: $pendingSeason,
+                        pendingEpisode: $pendingEpisode
                     )
                     .opacity(0)
                     .allowsHitTesting(false)
                     .edgesIgnoringSafeArea(.all)
                 }
 
-                // Видимый слой — вместо плеера
                 VStack(spacing: 14) {
                     ProgressView()
                         .scaleEffect(1.6)
@@ -76,6 +99,11 @@ struct PlayerScreen: View {
                             Image(systemName: "waveform")
                         }
                     }
+                    Button {
+                        runCinemarDiagnostics()
+                    } label: {
+                        Image(systemName: "stethoscope")
+                    }
                     Button { showManualURLInput = true } label: {
                         Image(systemName: "link")
                     }
@@ -95,15 +123,28 @@ struct PlayerScreen: View {
                     videoURL: capturedVideoURL,
                     voices: voices,
                     currentVoice: currentVoice,
+                    seasons: seasons,
+                    episodes: episodes,
+                    currentSeason: currentSeason,
+                    currentEpisode: currentEpisode,
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
                         capturedVideoURL = nil
-                        showCaptureSheet = false
+                    },
+                    onSeasonChange: { s in
+                        currentSeason = s
+                        currentEpisode = nil
+                        episodes = []
+                        pendingSeason = s
+                        capturedVideoURL = nil
+                    },
+                    onEpisodeChange: { e in
+                        currentEpisode = e
+                        pendingEpisode = e
+                        capturedVideoURL = nil
                     },
                     onOpenInSafari: { url in
-                        // ФИКС (п.3): копируем ссылку в буфер перед открытием Safari,
-                        // чтобы пользователь мог вставить её вручную, если что-то пойдёт не так.
                         UIPasteboard.general.string = url.absoluteString
                         showCaptureSheet = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -124,7 +165,6 @@ struct PlayerScreen: View {
                         }
                     },
                     onCancel: {
-                        // «Отмена» в sheet = закрыть sheet + вернуться к описанию фильма
                         showCaptureSheet = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             dismiss()
@@ -149,7 +189,114 @@ struct PlayerScreen: View {
             } message: {
                 Text("Вставьте ссылку из плеера, если он её показывает.")
             }
+            .overlay {
+                if showCinemarDiag {
+                    cinemarDiagOverlay
+                }
+            }
         }
+    }
+
+    // MARK: - Диагностика cinemar
+
+    private var cinemarDiagOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.95).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Структура cinemar")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = cinemarDiagText
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .foregroundStyle(.white)
+                    }
+                }
+
+                Text("Скопируй и пришли весь текст ниже")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.6))
+
+                ScrollView {
+                    Text(cinemarDiagText.isEmpty ? "Пусто. Cinemar-iframe не ответил (возможно, не загрузился)." : cinemarDiagText)
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                HStack(spacing: 10) {
+                    Button {
+                        UIPasteboard.general.string = cinemarDiagText
+                        showCinemarDiag = false
+                    } label: {
+                        Text("Скопировать и закрыть")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                    Button {
+                        showCinemarDiag = false
+                    } label: {
+                        Text("Закрыть")
+                            .font(.subheadline).bold()
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                            .background(Color.white.opacity(0.15))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(20)
+            .background(Color(white: 0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .padding(20)
+        }
+    }
+
+    private func runCinemarDiagnostics() {
+        cinemarDiagText = "Собираю данные из cinemar-iframe…"
+        showCinemarDiag = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            guard let window = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first?
+                    .windows
+                    .first(where: { $0.isKeyWindow }),
+                  let webView = findWebView(in: window) else {
+                cinemarDiagText = "WKWebView не найден"
+                return
+            }
+
+            let js = """
+            (function(){
+            try{window.postMessage({type:'diagnose'},'*');}catch(e){}
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.postMessage({type:'diagnose'},'*');}catch(e){}
+            }
+            })();
+            """
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+    }
+
+    private func findWebView(in view: UIView) -> WKWebView? {
+        if let wv = view as? WKWebView { return wv }
+        for sub in view.subviews {
+            if let found = findWebView(in: sub) { return found }
+        }
+        return nil
     }
 
     private func presentShareSheet(for url: URL) {
