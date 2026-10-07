@@ -86,13 +86,29 @@ enum PlayerJS {
         try{
             var btns = document.querySelectorAll(
                 '.vjs-big-play-button, .play-button, .player-poster, ' +
-                '[class*="play-btn"], [class*="playButton"], [class*="play_button"], ' +
-                '.poster-overlay, [class*="poster-play"]'
+                '[class*=\\"play-btn\\"], [class*=\\"playButton\\"], [class*=\\"play_button\\"], ' +
+                '.poster-overlay, [class*=\\"poster-play\\"]'
             );
             for(var i=0;i<btns.length;i++){
                 try{ btns[i].click(); }catch(e){}
             }
         }catch(e){}
+    }
+
+    // 404 / page not found detection (только топ-фрейм — наш cinemar embed)
+    function checkError(){
+        if (window.top !== window) return;
+        try {
+            var t = document.title || '';
+            var body = (document.body && document.body.textContent || '').substring(0, 800).toLowerCase();
+            var tLower = t.toLowerCase();
+            if (tLower.indexOf('404') !== -1 ||
+                body.indexOf('404 not found') !== -1 ||
+                body.indexOf('page not found') !== -1 ||
+                body.indexOf('страница не найдена') !== -1) {
+                try { window.webkit.messageHandlers.playerError.postMessage('not_found'); } catch(e){}
+            }
+        } catch(e){}
     }
 
     try{
@@ -198,47 +214,14 @@ enum PlayerJS {
         return 'voice';
     }
 
-    function addUnique(arr, val){
-        if(!val) return;
-        if(arr.indexOf(val) !== -1) return;
-        arr.push(val);
-    }
-
-    function findDropdownForTitle(title){
-        var parent = title.parentNode;
-        if(parent){
-            var d = parent.querySelector('.playlist-dropdown');
-            if(d) return d;
-        }
-        var sib = title.nextElementSibling;
-        while(sib){
-            if(sib.classList && sib.classList.contains('playlist-dropdown')) return sib;
-            sib = sib.nextElementSibling;
-        }
-        return null;
-    }
-
     function isNavButton(b){
         var cls = String((b && b.className) || '');
         return cls.indexOf('playlist-prev')!==-1 || cls.indexOf('playlist-next')!==-1;
     }
 
-    function collectButtonsFrom(container, bucket){
-        var btns = container.querySelectorAll('button, a');
-        for(var j=0;j<btns.length;j++){
-            var b = btns[j];
-            if(isNavButton(b)) continue;
-            var btext = norm(b.textContent);
-            if(!btext) continue;
-            if(btext.length > 120) continue;
-            addUnique(bucket.items, btext);
-            var cls = String(b.className || '');
-            if((cls.indexOf('is-active')!==-1 || cls.indexOf('active')!==-1) && !bucket.active){
-                bucket.active = btext;
-            }
-        }
-    }
-
+    // ---------------- COLLECT GROUPS ----------------
+    // cinemar flat-структура: кнопки-сиблинги между двумя .playlist-title.
+    // Работает и для вложенных вариантов (.playlist-dropdown как сиблинг).
     function collectGroups(){
         var groups = {
             season: { items: [], active: '' },
@@ -246,42 +229,75 @@ enum PlayerJS {
             voice:  { items: [], active: '' }
         };
 
-        // Primary: .playlist-title + .playlist-dropdown
-        var titles = document.querySelectorAll('.playlist-title');
+        var titles = Array.prototype.slice.call(document.querySelectorAll('.playlist-title'));
+        if (titles.length === 0) return groups;
+
+        var allButtons = Array.prototype.slice.call(
+            document.querySelectorAll('button, a, [role=button]')
+        );
+
+        function idx(el){ return allButtons.indexOf(el); }
+
+        function addItem(bucket, text, isActive){
+            if (!text) return;
+            if (text.length > 120) return;
+            if (bucket.items.indexOf(text) === -1) bucket.items.push(text);
+            if (isActive && !bucket.active) bucket.active = text;
+        }
+
+        function addFromScope(scope, bucket){
+            if (!scope || !scope.querySelectorAll) return;
+            var els = scope.querySelectorAll('button, a, [role=button]');
+            for (var k = 0; k < els.length; k++){
+                var el = els[k];
+                if (isNavButton(el)) continue;
+                if (el.classList && el.classList.contains('playlist-title')) continue;
+                var t = norm(el.textContent);
+                var cls = String(el.className || '');
+                addItem(bucket, t, cls.indexOf('is-active') !== -1 || cls.indexOf('active') !== -1);
+            }
+        }
+
         for (var i = 0; i < titles.length; i++) {
             var title = titles[i];
             var titleText = norm(title.textContent);
             if (!titleText) continue;
             var kind = classifyGroup(titleText);
-            var dropdown = findDropdownForTitle(title);
             var bucket = groups[kind];
-            addUnique(bucket.items, titleText);
-            if (!dropdown) continue;
-            collectButtonsFrom(dropdown, bucket);
-        }
 
-        // Fallback для озвучки (у cinemar бывает отдельный ряд табов)
-        if (groups.voice.items.length <= 1) {
-            var voiceSelectors = [
-                '.translations a', '.translations button',
-                '.translation-list a', '.translation-list button',
-                '.voice-list a', '.voice-list button',
-                '.voices a', '.voices button',
-                '.player-translations a', '.player-translations button',
-                '[data-translation]', '[data-voice]'
-            ];
-            for (var vs = 0; vs < voiceSelectors.length; vs++) {
-                var els = document.querySelectorAll(voiceSelectors[vs]);
-                for (var ei = 0; ei < els.length; ei++) {
-                    var el = els[ei];
-                    var txt = norm(el.textContent);
-                    if (!txt || txt.length > 120) continue;
-                    addUnique(groups.voice.items, txt);
-                    var cls2 = String(el.className || '');
-                    if((cls2.indexOf('is-active')!==-1 || cls2.indexOf('active')!==-1) && !groups.voice.active){
-                        groups.voice.active = txt;
-                    }
+            var startIdx = idx(title);
+            var endIdx = (i + 1 < titles.length) ? idx(titles[i + 1]) : allButtons.length;
+            if (endIdx === -1) endIdx = allButtons.length;
+
+            if (startIdx !== -1) {
+                // Основной путь: плоский список кнопок между title и следующим title
+                for (var j = startIdx + 1; j < endIdx; j++) {
+                    var el = allButtons[j];
+                    if (isNavButton(el)) continue;
+                    if (el.classList && el.classList.contains('playlist-title')) continue;
+                    var t = norm(el.textContent);
+                    var cls = String(el.className || '');
+                    addItem(bucket, t, cls.indexOf('is-active') !== -1 || cls.indexOf('active') !== -1);
                 }
+                continue;
+            }
+
+            // Fallback: title не кнопка — обходим сиблинги
+            var node = title.nextElementSibling;
+            var guard = 0;
+            while (node && guard < 40) {
+                guard++;
+                if (node.classList && node.classList.contains('playlist-title')) break;
+                if (node.tagName === 'BUTTON' || node.tagName === 'A') {
+                    if (!isNavButton(node)) {
+                        var nCls = String(node.className || '');
+                        addItem(bucket, norm(node.textContent),
+                                nCls.indexOf('is-active') !== -1 || nCls.indexOf('active') !== -1);
+                    }
+                } else {
+                    addFromScope(node, bucket);
+                }
+                node = node.nextElementSibling;
             }
         }
 
@@ -319,39 +335,53 @@ enum PlayerJS {
         if (!target) return false;
 
         function tryClick(){
+            // Пробуем кликнуть кнопку с точно таким текстом в пределах "своей" группы
             var titles = document.querySelectorAll('.playlist-title');
-            var titleEl = null;
             for (var i = 0; i < titles.length; i++) {
-                if (classifyGroup(norm(titles[i].textContent)) === kind) {
-                    titleEl = titles[i];
-                    break;
-                }
-            }
-            if (titleEl) {
+                var titleEl = titles[i];
+                if (classifyGroup(norm(titleEl.textContent)) !== kind) continue;
+
+                // раскрываем dropdown, если он есть
                 try { titleEl.click(); } catch(e){}
-                var dropdown = findDropdownForTitle(titleEl);
-                var scope = dropdown || document;
-                var btns = scope.querySelectorAll('button, a');
-                for (var j = 0; j < btns.length; j++) {
-                    var b = btns[j];
-                    if (isNavButton(b)) continue;
-                    if (norm(b.textContent) === target) {
-                        try { b.click(); } catch(e){}
+
+                var startIdx = allIndexOf(titleEl);
+                var endIdx = allIndexOf(titles[i + 1] || null);
+                if (endIdx === -1) endIdx = 1e9;
+                for (var j = (startIdx === -1 ? 0 : startIdx + 1); j < endIdx; j++) {
+                    var el = allButtonsCache[j];
+                    if (!el) break;
+                    if (isNavButton(el)) continue;
+                    if (norm(el.textContent) === target) {
+                        try { el.click(); } catch(e){}
                         return true;
                     }
                 }
             }
+            // Глобальный фоллбек
             var all = document.querySelectorAll('button, a, [role=button]');
             for (var k = 0; k < all.length; k++) {
-                var el = all[k];
-                if (isNavButton(el)) continue;
-                if (norm(el.textContent) === target) {
-                    try { el.click(); } catch(e){}
+                var e2 = all[k];
+                if (isNavButton(e2)) continue;
+                if (norm(e2.textContent) === target) {
+                    try { e2.click(); } catch(e){}
                     return true;
                 }
             }
             return false;
         }
+
+        function allIndexOf(el){
+            if (!el) return -1;
+            if (!allButtonsCache) refreshCache();
+            return allButtonsCache.indexOf(el);
+        }
+        var allButtonsCache = null;
+        function refreshCache(){
+            allButtonsCache = Array.prototype.slice.call(
+                document.querySelectorAll('button, a, [role=button]')
+            );
+        }
+        refreshCache();
 
         tryClick();
         setTimeout(tryClick, 250);
@@ -491,6 +521,9 @@ enum PlayerJS {
     });
     [900, 2200, 4000, 7000, 11000].forEach(function(d){
         setTimeout(autoStartPlayback, d);
+    });
+    [1200, 2500, 5000].forEach(function(d){
+        setTimeout(checkError, d);
     });
     })();
     """
