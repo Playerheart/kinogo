@@ -23,9 +23,6 @@ struct ScopedWebView: UIViewRepresentable {
             if let list = list { config.userContentController.add(list) }
         }
 
-        // CSS + скрытие рекламы. #header больше НЕ скрываем (шапка KINOGO нужна).
-        // .sliderWrap / .catBlock — margin через CSS вместо DOM-обёрток,
-        // чтобы не ломать скролл слайдера и раскрытие категорий.
         let js = """
         (function(){
         var HIDE_ID='__scoped_hide__';
@@ -48,12 +45,7 @@ struct ScopedWebView: UIViewRepresentable {
         '[id^="adangle-"],[id^="br5g"],[id^="eas-"],.ad-branding,ins.ad-branding,ins[data-key],'+
         'img[src*="pinco"],img[src*="kysh"],img[src*="promocode"],img[src*="agl010"],img[src*="agl007"],img[src*="agl008"],img[src*="b5c1d2e8"],'+
         '[data-key="4ed59b8f-48b5-417a-9e88-3fb2deccafd1"],[data-adblock-hidden="1"]{display:none !important;}'+
-        // Слайдер постеров: только margin, overflow не трогаем —
-        // чтобы нативный слайдер сайта скроллился вправо-влево.
         '.sliderWrap{margin:8px !important;box-sizing:border-box !important;}'+
-        // Категории: margin + никакого overflow:hidden —
-        // чтобы раскрывающиеся пункты не вылезали за пределы карточки
-        // (их вылезание задаёт сам сайт, мы лишь не мешаем).
         '.catBlock{margin:8px !important;box-sizing:border-box !important;border-radius:10px !important;overflow:visible !important;}';
         document.head.appendChild(s);
         }
@@ -132,7 +124,7 @@ struct ScopedWebView: UIViewRepresentable {
             let s = url.absoluteString
             if s.range(of: #"/page/\d+/"#, options: .regularExpression) != nil { return false }
             if s.contains("do=search") { return false }
-            let pattern = #"/\d+-[a-z0-9\-]+\.html"#
+            let pattern = AppConfig.profile.movieURLRegex
             return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
         }
 
