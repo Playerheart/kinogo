@@ -26,8 +26,6 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
-    // Данные cinemar-диагностики — используются и в PlayerScreen overlay,
-    // и в CaptureSheetView overlay (когда sheet открыт).
     @State private var cinemarDiagText = ""
     @State private var showCinemarDiag = false
 
@@ -52,24 +50,36 @@ struct PlayerScreen: View {
                             capturedVideoURL = normalized
                             showCaptureSheet = true
                         },
-                        onVoicesDetected: { list in
+                        onVoicesDetected: { list, active in
                             if list.isEmpty { return }
                             voices = list
-                            if currentVoice == nil { currentVoice = list.first }
+                            // Автовыбор: активный из cinemar → иначе первый → иначе оставляем что было
+                            if let a = active, list.contains(a) {
+                                currentVoice = a
+                            } else if currentVoice == nil || !list.contains(currentVoice!) {
+                                currentVoice = list.first
+                            }
                         },
-                        onSeasonsDetected: { list in
+                        onSeasonsDetected: { list, active in
                             if list.isEmpty { return }
                             seasons = list
-                            if currentSeason == nil { currentSeason = list.first }
+                            if let a = active, list.contains(a) {
+                                currentSeason = a
+                            } else if currentSeason == nil || !list.contains(currentSeason!) {
+                                currentSeason = list.first
+                            }
                         },
-                        onEpisodesDetected: { list in
+                        onEpisodesDetected: { list, active in
                             if list.isEmpty { return }
                             episodes = list
-                            if currentEpisode == nil { currentEpisode = list.first }
+                            if let a = active, list.contains(a) {
+                                currentEpisode = a
+                            } else if currentEpisode == nil || !list.contains(currentEpisode!) {
+                                currentEpisode = list.first
+                            }
                         },
                         onCinemarDiag: { text in
                             cinemarDiagText = text
-                            // Overlay в PlayerScreen показываем только если sheet закрыт.
                             if !showCaptureSheet {
                                 showCinemarDiag = true
                             }
@@ -134,7 +144,6 @@ struct PlayerScreen: View {
                     currentEpisode: currentEpisode,
                     cinemarDiagText: $cinemarDiagText,
                     onRequestCinemarDiag: {
-                        // Тихо запускаем диагностику — overlay покажет сама sheet.
                         runCinemarDiagnostics(showOverlay: false)
                     },
                     onVoiceChange: { v in
@@ -207,7 +216,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Диагностика cinemar (используется и здесь, и в sheet)
+    // MARK: - Диагностика cinemar
 
     private var cinemarDiagOverlay: some View {
         ZStack {
