@@ -132,7 +132,16 @@ enum CompatibilityChecker {
                                        timeoutInterval: 12)
             detailReq.setValue("https://\(host)/", forHTTPHeaderField: "Referer")
 
-            URLSession.shared.dataTask(with: detailReq) { ddata, _, _ in
+            URLSession.shared.dataTask(with: detailReq) { ddata, dresponse, _ in
+
+                // ФИКС (п.6): 9-я проверка — HTTP-статус detail-страницы.
+                let dhttp = dresponse as? HTTPURLResponse
+                let detailStatus = dhttp?.statusCode ?? -1
+                let detailOK = (200...299).contains(detailStatus)
+                checks.append(.init(name: "HTTP detail-страницы",
+                                    status: detailOK ? .ok : .fail,
+                                    detail: "HTTP \(detailStatus)"))
+
                 let dhtml = String(data: ddata ?? Data(), encoding: .utf8) ?? ""
 
                 let hasJSONLD = dhtml.contains("\"@type\"") && dhtml.contains("Movie")
