@@ -44,8 +44,8 @@ struct MoviePoster: View {
         await MainActor.run { self.isLoading = true }
 
         var request = URLRequest(url: u)
-        request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
-        request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
+        request.setValue(AppConfig.referer, forHTTPHeaderField: "Referer")
+        request.setValue(AppConfig.origin,  forHTTPHeaderField: "Origin")
         request.setValue(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
