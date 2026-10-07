@@ -4,7 +4,7 @@ import WebKit
 struct InferenceResult {
     let host: String
     let profile: SiteProfile
-    let movieCount: Int
+    let movieCount: Int   // 0 = провал, >0 = успех
     let log: String
 }
 
@@ -16,26 +16,14 @@ final class ProfileInferencer: NSObject {
     private var completion: ((InferenceResult?) -> Void)?
     private var host: String = ""
     private var isDone = false
+    private var diagLog: [String] = []
 
     private override init() {
         super.init()
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-
-        // Блокируем картинки и шрифты — быстрее грузится, а нам нужен только DOM.
-        let blockHeavy: [String: Any] = [
-            "trigger": ["url-filter": ".*", "resource-type": ["image", "font"]],
-            "action": ["type": "block"]
-        ]
-        if let data = try? JSONSerialization.data(withJSONObject: [blockHeavy]),
-           let json = String(data: data, encoding: .utf8) {
-            WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: "BlockHeavyInference_v1",
-                encodedContentRuleList: json
-            ) { list, _ in
-                if let list = list { config.userContentController.add(list) }
-            }
-        }
+        // Картинки НЕ блокируем — иначе lazy-load на сайте может не сработать,
+        // и каталог будет пустым. Жертвуем скоростью ради надёжности.
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -46,20 +34,55 @@ final class ProfileInferencer: NSObject {
         self.host = host
         self.completion = completion
         self.isDone = false
+        self.diagLog = []
+
         guard let url = URL(string: "https://\(host)/") else {
-            finish(with: nil); return
+            finishFailure(reason: "Неверный хост: \(host)")
+            return
         }
+        log("Начинаю загрузку \(url.absoluteString)")
         webView.stopLoading()
         webView.load(URLRequest(url: url))
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
-            self?.finish(with: nil)
+            guard let self = self, !self.isDone else { return }
+            self.finishFailure(reason: "Таймаут 45 секунд")
         }
     }
 
-    private func finish(with result: InferenceResult?) {
+    private func log(_ msg: String) {
+        diagLog.append(msg)
+        print("[ProfileInferencer] \(msg)")
+    }
+
+    private func logString() -> String {
+        return diagLog.joined(separator: "\n")
+    }
+
+    private func finishFailure(reason: String) {
         guard !isDone else { return }
         isDone = true
+        log("❌ \(reason)")
+        let result = InferenceResult(
+            host: host,
+            profile: SiteProfile.default,
+            movieCount: 0,
+            log: logString()
+        )
+        completion?(result)
+        completion = nil
+    }
+
+    private func finishSuccess(profile: SiteProfile, movieCount: Int, detail: String) {
+        guard !isDone else { return }
+        isDone = true
+        log(detail)
+        let result = InferenceResult(
+            host: host,
+            profile: profile,
+            movieCount: movieCount,
+            log: logString()
+        )
         completion?(result)
         completion = nil
     }
@@ -68,38 +91,59 @@ final class ProfileInferencer: NSObject {
 
     private func analyze() {
         guard !isDone else { return }
-        webView.evaluateJavaScript(ProfileInferencer.collectorJS) { [weak self] result, _ in
+        log("Анализирую DOM…")
+
+        webView.evaluateJavaScript(ProfileInferencer.collectorJS) { [weak self] result, error in
             guard let self = self, !self.isDone else { return }
-            guard let jsonStr = result as? String,
-                  let data = jsonStr.data(using: .utf8),
-                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                  let candidates = dict["candidates"] as? [[String: Any]],
-                  !candidates.isEmpty
-            else {
-                self.finish(with: nil)
+
+            if let err = error {
+                self.finishFailure(reason: "JS-ошибка: \(err.localizedDescription)")
                 return
             }
-            let linksCount = (dict["movieLinksCount"] as? Int) ?? 0
-            self.validateCandidates(candidates, movieLinksCount: linksCount)
+
+            guard let jsonStr = result as? String else {
+                self.finishFailure(reason: "JS вернул не строку: \(String(describing: result))")
+                return
+            }
+
+            guard let data = jsonStr.data(using: .utf8),
+                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                self.finishFailure(reason: "JSON не парсится. Первые 200 символов: \(String(jsonStr.prefix(200)))")
+                return
+            }
+
+            let movieLinksCount = (dict["movieLinksCount"] as? Int) ?? 0
+            let title = (dict["title"] as? String) ?? "?"
+            let pageURL = (dict["url"] as? String) ?? "?"
+            self.log("Финальный URL: \(pageURL)")
+            self.log("Заголовок страницы: \(title)")
+            self.log("Ссылок /NNN-slug.html: \(movieLinksCount)")
+
+            guard let candidates = dict["candidates"] as? [[String: Any]], !candidates.isEmpty else {
+                self.finishFailure(reason: "Не найдено кандидатов-карточек (ссылок на фильмы: \(movieLinksCount))")
+                return
+            }
+            self.log("Кандидатов: \(candidates.count)")
+
+            self.validateCandidates(candidates)
         }
     }
 
-    private func validateCandidates(_ candidates: [[String: Any]], movieLinksCount: Int) {
-        var log = "Найдено ссылок на фильмы: \(movieLinksCount)\nКандидатов: \(candidates.count)\n\n"
-        var best: (SiteProfile, Int, String)?
+    private func validateCandidates(_ candidates: [[String: Any]]) {
         var idx = 0
+        var best: (profile: SiteProfile, count: Int, cardClass: String)?
 
         func step() {
             if isDone { return }
             guard idx < candidates.count else {
-                if let (profile, count, bestLog) = best {
-                    let result = InferenceResult(
-                        host: host, profile: profile,
-                        movieCount: count, log: log + bestLog
+                if let b = best, b.count > 0 {
+                    self.finishSuccess(
+                        profile: b.profile,
+                        movieCount: b.count,
+                        detail: "✅ Лучший кандидат: .\(b.cardClass) → \(b.count) фильмов"
                     )
-                    finish(with: result)
                 } else {
-                    finish(with: nil)
+                    self.finishFailure(reason: "Ни один кандидат не дал валидных фильмов")
                 }
                 return
             }
@@ -107,6 +151,8 @@ final class ProfileInferencer: NSObject {
             let cand = candidates[idx]; idx += 1
             let profile = buildProfile(from: cand)
             let cardClass = (cand["cardClass"] as? String) ?? "?"
+            let titleSel = (cand["titleSelector"] as? String) ?? ""
+            let posterSel = (cand["posterSelector"] as? String) ?? ""
             let js = ExtractionScripts.catalog(profile: profile)
 
             webView.evaluateJavaScript(js) { [weak self] res, _ in
@@ -116,14 +162,14 @@ final class ProfileInferencer: NSObject {
                    let d = s.data(using: .utf8),
                    let arr = (try? JSONSerialization.jsonObject(with: d)) as? [[String: Any]] {
                     count = arr.filter { m in
-                        let title = (m["title"] as? String) ?? ""
-                        let url = (m["url"] as? String) ?? ""
-                        return !title.isEmpty && !url.isEmpty
+                        let t = (m["title"] as? String) ?? ""
+                        let u = (m["url"] as? String) ?? ""
+                        return !t.isEmpty && !u.isEmpty
                     }.count
                 }
-                log += "  • .\(cardClass) → \(count) фильмов\n"
-                if best == nil || count > best!.1 {
-                    best = (profile, count, "\nЛучший: .\(cardClass) (\(count) фильмов)")
+                self.log("  • card=.\(cardClass) title=\"\(titleSel)\" poster=\"\(posterSel)\" → \(count) фильмов")
+                if best == nil || count > best!.count {
+                    best = (profile, count, cardClass)
                 }
                 step()
             }
@@ -148,7 +194,7 @@ final class ProfileInferencer: NSObject {
         return p
     }
 
-    // MARK: - JS: сбор allLinks[i кандидатов
+    // MARK: - JS: сбор кандидатов
 
     private static let collectorJS = """
     (function(){
@@ -157,7 +203,7 @@ final class ProfileInferencer: NSObject {
     var movieLinks = [];
     var allLinks = document.querySelectorAll('a[href]');
     for (var i = 0; i < allLinks.length && i < 5000; i++) {
-      var h =].getAttribute('href') || '';
+      var h = allLinks[i].getAttribute('href') || '';
       if (/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) {
         movieLinks.push(allLinks[i]);
       }
@@ -251,16 +297,20 @@ final class ProfileInferencer: NSObject {
 }
 
 extension ProfileInferencer: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        log("→ Начало навигации")
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        log("→ Загрузка завершена: \(webView.url?.absoluteString ?? "?")")
         guard !isDone else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
             self?.analyze()
         }
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        finish(with: nil)
+        finishFailure(reason: "Ошибка навигации: \(error.localizedDescription)")
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        finish(with: nil)
+        finishFailure(reason: "Ошибка provisional: \(error.localizedDescription)")
     }
 }
