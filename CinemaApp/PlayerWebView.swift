@@ -234,7 +234,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction: WKNavigationAction,
+                     for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
