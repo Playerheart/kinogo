@@ -66,6 +66,55 @@ struct SettingsView: View {
                     .disabled(isChecking)
                 }
 
+                Section("Профиль парсинга") {
+                    HStack {
+                        Text("Хост")
+                        Spacer()
+                        Text(AppConfig.host).foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Источник")
+                        Spacer()
+                        Text(AppConfig.profileSourceLabel)
+                            .foregroundStyle(
+                                AppConfig.hasCachedProfileForCurrentHost ? .green :
+                                (AppConfig.hasBuiltInProfileForCurrentHost ? .blue : .secondary)
+                            )
+                    }
+
+                    Button {
+                        runInference()
+                    } label: {
+                        HStack {
+                            Label("Определить профиль", systemImage: "wand.and.stars")
+                            if isChecking {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isChecking)
+
+                    Button(role: .destructive) {
+                        AppConfig.clearCachedProfile(for: AppConfig.host)
+                        NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                    } label: {
+                        Label("Сбросить профиль для \(AppConfig.host)", systemImage: "arrow.counterclockwise")
+                    }
+                    .disabled(!AppConfig.hasCachedProfileForCurrentHost || isChecking)
+
+                    if !AppConfig.cachedProfileHosts.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Настроенные хосты:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(AppConfig.cachedProfileHosts.joined(separator: ", "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Текущий конфиг") {
                     HStack {
                         Text("Хост")
@@ -143,6 +192,50 @@ struct SettingsView: View {
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
+    // MARK: - Определение профиля
+
+    private func runInference() {
+        isChecking = true
+        debugTitle = "Определение профиля"
+        debugMessage = "▶ Открываю \(AppConfig.host)…\nОбычно занимает 10–20 секунд."
+        showDebug = true
+
+        let targetHost = AppConfig.host
+        ProfileInferencer.shared.infer(host: targetHost) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isChecking = false
+
+                if let r = result {
+                    AppConfig.cacheProfile(r.profile, for: r.host)
+                    self.debugTitle = "✅ Профиль определён"
+                    self.debugMessage = """
+                    Хост: \(r.host)
+                    Найдено фильмов: \(r.movieCount)
+
+                    \(r.log)
+
+                    Профиль сохранён в памяти телефона.
+                    Каталог и карточки перезагрузятся автоматически.
+                    """
+                    NotificationCenter.default.post(name: .appConfigChanged, object: nil)
+                } else {
+                    self.debugTitle = "❌ Не удалось"
+                    self.debugMessage = """
+                    Не получилось подобрать селекторы для \(targetHost).
+
+                    Возможные причины:
+                    • Сайт недоступен
+                    • Другая структура (не DLE)
+                    • Нет ссылок вида /NNN-slug.html
+
+                    Можно попробовать позже или править вручную.
+                    """
+                }
+            }
+        }
+    }
+
     // MARK: - Диагностика сети
 
     private var debugOverlay: some View {
@@ -159,22 +252,37 @@ struct SettingsView: View {
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                 }
                 .frame(maxHeight: 420)
                 .padding(10)
                 .background(Color.white.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                Button {
-                    showDebug = false
-                } label: {
-                    Text("Закрыть")
-                        .font(.subheadline).bold()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
+                HStack(spacing: 10) {
+                    Button {
+                        UIPasteboard.general.string = debugMessage
+                    } label: {
+                        Text("Скопировать")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.white.opacity(0.15))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+
+                    Button {
+                        showDebug = false
+                    } label: {
+                        Text("Закрыть")
+                            .font(.subheadline).bold()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
                 }
             }
             .padding(20)
