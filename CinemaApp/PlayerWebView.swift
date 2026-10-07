@@ -5,9 +5,9 @@ struct RawPlayerWebView: UIViewRepresentable {
     let url: URL
     @Binding var isLoading: Bool
     var onVideoURLTap: ((URL) -> Void)? = nil
-    var onVoicesDetected: (([String]) -> Void)? = nil
-    var onSeasonsDetected: (([String]) -> Void)? = nil
-    var onEpisodesDetected: (([String]) -> Void)? = nil
+    var onVoicesDetected: (([String], String?) -> Void)? = nil
+    var onSeasonsDetected: (([String], String?) -> Void)? = nil
+    var onEpisodesDetected: (([String], String?) -> Void)? = nil
     var onCinemarDiag: ((String) -> Void)? = nil
     @Binding var pendingVoice: String?
     @Binding var pendingSeason: String?
@@ -156,9 +156,9 @@ struct RawPlayerWebView: UIViewRepresentable {
         weak var webView: WKWebView?
         let isLoading: Binding<Bool>
         var onVideoURLTap: ((URL) -> Void)?
-        var onVoicesDetected: (([String]) -> Void)?
-        var onSeasonsDetected: (([String]) -> Void)?
-        var onEpisodesDetected: (([String]) -> Void)?
+        var onVoicesDetected: (([String], String?) -> Void)?
+        var onSeasonsDetected: (([String], String?) -> Void)?
+        var onEpisodesDetected: (([String], String?) -> Void)?
         var onCinemarDiag: ((String) -> Void)?
         private var observer: NSObjectProtocol?
 
@@ -185,20 +185,32 @@ struct RawPlayerWebView: UIViewRepresentable {
             webView.load(request)
         }
 
+        private func parseListPayload(_ body: Any) -> ([String], String?)? {
+            if let arr = body as? [String] {
+                return (arr, nil)
+            }
+            if let dict = body as? [String: Any] {
+                let items = (dict["items"] as? [String]) ?? []
+                let active = dict["active"] as? String
+                return (items, active)
+            }
+            return nil
+        }
+
         func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
             switch message.name {
             case "videoURL":
                 guard let str = message.body as? String, let url = URL(string: str) else { return }
                 DispatchQueue.main.async { self.onVideoURLTap?(url) }
             case "voiceList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onVoicesDetected?(arr) }
+                guard let (items, active) = parseListPayload(message.body) else { return }
+                DispatchQueue.main.async { self.onVoicesDetected?(items, active) }
             case "seasonList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onSeasonsDetected?(arr) }
+                guard let (items, active) = parseListPayload(message.body) else { return }
+                DispatchQueue.main.async { self.onSeasonsDetected?(items, active) }
             case "episodeList":
-                guard let arr = message.body as? [String] else { return }
-                DispatchQueue.main.async { self.onEpisodesDetected?(arr) }
+                guard let (items, active) = parseListPayload(message.body) else { return }
+                DispatchQueue.main.async { self.onEpisodesDetected?(items, active) }
             case "cinemarDiag":
                 guard let str = message.body as? String else { return }
                 DispatchQueue.main.async { self.onCinemarDiag?(str) }
@@ -222,7 +234,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     for navigationAction: WKNavigationAction,
+                     forNavigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
