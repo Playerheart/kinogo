@@ -6,7 +6,12 @@ struct RawPlayerWebView: UIViewRepresentable {
     @Binding var isLoading: Bool
     var onVideoURLTap: ((URL) -> Void)? = nil
     var onVoicesDetected: (([String]) -> Void)? = nil
+    var onSeasonsDetected: (([String]) -> Void)? = nil
+    var onEpisodesDetected: (([String]) -> Void)? = nil
+    var onCinemarDiag: ((String) -> Void)? = nil
     @Binding var pendingVoice: String?
+    @Binding var pendingSeason: String?
+    @Binding var pendingEpisode: String?
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -73,6 +78,9 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
+        config.userContentController.add(context.coordinator, name: "seasonList")
+        config.userContentController.add(context.coordinator, name: "episodeList")
+        config.userContentController.add(context.coordinator, name: "cinemarDiag")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -84,6 +92,9 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         context.coordinator.onVideoURLTap = onVideoURLTap
         context.coordinator.onVoicesDetected = onVoicesDetected
+        context.coordinator.onSeasonsDetected = onSeasonsDetected
+        context.coordinator.onEpisodesDetected = onEpisodesDetected
+        context.coordinator.onCinemarDiag = onCinemarDiag
         context.coordinator.webView = webView
         context.coordinator.load(url: url)
         return webView
@@ -105,6 +116,38 @@ struct RawPlayerWebView: UIViewRepresentable {
             uiView.evaluateJavaScript(js, completionHandler: nil)
             DispatchQueue.main.async { pendingVoice = nil }
         }
+
+        if let season = pendingSeason, !season.isEmpty {
+            let esc = season.replacingOccurrences(of: "\\", with: "\\\\")
+                             .replacingOccurrences(of: "'", with: "\\'")
+            let js = """
+            (function(){
+            try{window.postMessage({type:'selectSeason',text:'\(esc)'},'*');}catch(e){}
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.postMessage({type:'selectSeason',text:'\(esc)'},'*');}catch(e){}
+            }
+            })();
+            """
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+            DispatchQueue.main.async { pendingSeason = nil }
+        }
+
+        if let episode = pendingEpisode, !episode.isEmpty {
+            let esc = episode.replacingOccurrences(of: "\\", with: "\\\\")
+                             .replacingOccurrences(of: "'", with: "\\'")
+            let js = """
+            (function(){
+            try{window.postMessage({type:'selectEpisode',text:'\(esc)'},'*');}catch(e){}
+            var frames=document.querySelectorAll('iframe');
+            for(var i=0;i<frames.length;i++){
+            try{frames[i].contentWindow.postMessage({type:'selectEpisode',text:'\(esc)'},'*');}catch(e){}
+            }
+            })();
+            """
+            uiView.evaluateJavaScript(js, completionHandler: nil)
+            DispatchQueue.main.async { pendingEpisode = nil }
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(isLoading: $isLoading) }
@@ -114,6 +157,9 @@ struct RawPlayerWebView: UIViewRepresentable {
         let isLoading: Binding<Bool>
         var onVideoURLTap: ((URL) -> Void)?
         var onVoicesDetected: (([String]) -> Void)?
+        var onSeasonsDetected: (([String]) -> Void)?
+        var onEpisodesDetected: (([String]) -> Void)?
+        var onCinemarDiag: ((String) -> Void)?
         private var observer: NSObjectProtocol?
 
         init(isLoading: Binding<Bool>) {
@@ -147,6 +193,15 @@ struct RawPlayerWebView: UIViewRepresentable {
             case "voiceList":
                 guard let arr = message.body as? [String] else { return }
                 DispatchQueue.main.async { self.onVoicesDetected?(arr) }
+            case "seasonList":
+                guard let arr = message.body as? [String] else { return }
+                DispatchQueue.main.async { self.onSeasonsDetected?(arr) }
+            case "episodeList":
+                guard let arr = message.body as? [String] else { return }
+                DispatchQueue.main.async { self.onEpisodesDetected?(arr) }
+            case "cinemarDiag":
+                guard let str = message.body as? String else { return }
+                DispatchQueue.main.async { self.onCinemarDiag?(str) }
             default: break
             }
         }
