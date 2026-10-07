@@ -9,6 +9,7 @@ struct RawPlayerWebView: UIViewRepresentable {
     var onSeasonsDetected: (([String], String?) -> Void)? = nil
     var onEpisodesDetected: (([String], String?) -> Void)? = nil
     var onCinemarDiag: ((String) -> Void)? = nil
+    var onPlayerError: ((String) -> Void)? = nil
     @Binding var pendingVoice: String?
     @Binding var pendingSeason: String?
     @Binding var pendingEpisode: String?
@@ -81,6 +82,7 @@ struct RawPlayerWebView: UIViewRepresentable {
         config.userContentController.add(context.coordinator, name: "seasonList")
         config.userContentController.add(context.coordinator, name: "episodeList")
         config.userContentController.add(context.coordinator, name: "cinemarDiag")
+        config.userContentController.add(context.coordinator, name: "playerError")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -95,6 +97,7 @@ struct RawPlayerWebView: UIViewRepresentable {
         context.coordinator.onSeasonsDetected = onSeasonsDetected
         context.coordinator.onEpisodesDetected = onEpisodesDetected
         context.coordinator.onCinemarDiag = onCinemarDiag
+        context.coordinator.onPlayerError = onPlayerError
         context.coordinator.webView = webView
         context.coordinator.load(url: url)
         return webView
@@ -160,6 +163,7 @@ struct RawPlayerWebView: UIViewRepresentable {
         var onSeasonsDetected: (([String], String?) -> Void)?
         var onEpisodesDetected: (([String], String?) -> Void)?
         var onCinemarDiag: ((String) -> Void)?
+        var onPlayerError: ((String) -> Void)?
         private var observer: NSObjectProtocol?
 
         init(isLoading: Binding<Bool>) {
@@ -214,6 +218,9 @@ struct RawPlayerWebView: UIViewRepresentable {
             case "cinemarDiag":
                 guard let str = message.body as? String else { return }
                 DispatchQueue.main.async { self.onCinemarDiag?(str) }
+            case "playerError":
+                let str = (message.body as? String) ?? "unknown"
+                DispatchQueue.main.async { self.onPlayerError?(str) }
             default: break
             }
         }
