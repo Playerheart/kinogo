@@ -35,12 +35,10 @@ final class ProfileInferencer: NSObject {
     private let maxPaginationPerStart = 3
     private var paginationDepthByPrefix: [String: Int] = [:]
 
-    // Результаты первого этапа (каталог)
     private var catalogProfile: SiteProfile?
     private var catalogMovieCount: Int = 0
     private var firstMovieURL: URL?
 
-    // Флаг: сейчас идёт второй этап (детальная)
     private var isDetailStage = false
 
     private override init() {
@@ -136,7 +134,7 @@ final class ProfileInferencer: NSObject {
 
     private func logString() -> String { diagLog.joined(separator: "\n") }
 
-    private func: Int, card finishFailure(reason: String) {
+    private func finishFailure(reason: String) {
         guard !isDone else { return }
         isDone = true
         log("❌ \(reason)")
@@ -145,18 +143,15 @@ final class ProfileInferencer: NSObject {
         cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
     }
 
-    // Финализация этапа 1 → переход на этап 2
     private func finishAllPages() {
         guard !isDone else { return }
 
-        // Определяем победителя каталога
-        let catalogWinner: (profile: SiteProfile, countClass: String)? = {
+        let catalogWinner: (profile: SiteProfile, count: Int, cardClass: String)? = {
             if let (cardClass, vote) = classVotes.max(by: { $0.value.hits < $1.value.hits }),
                vote.hits >= 2 {
                 return (vote.best, vote.avgCount, cardClass)
             }
             if let best = pageResults.max(by: { $0.count < $1.count }) {
-                // извлекаем имя класса из profile.catalogCard (".shortstory" → "shortstory")
                 let cardClass = best.profile.catalogCard
                     .replacingOccurrences(of: ".", with: "")
                     .components(separatedBy: " ").first ?? best.profile.catalogCard
@@ -187,11 +182,9 @@ final class ProfileInferencer: NSObject {
         log("  poster = \(winner.profile.catalogPosterImg)")
         log("  rating = \(winner.profile.catalogRating)")
 
-        // Переходим на этап 2 (детальная)
         startDetailStage()
     }
 
-    // ЭТАП 2: открываем первую карточку каталога
     private func startDetailStage() {
         guard !isDone else { return }
         isDetailStage = true
@@ -235,7 +228,6 @@ final class ProfileInferencer: NSObject {
                 return
             }
 
-            // Начинаем с профиля каталога
             var profile = self.catalogProfile ?? SiteProfile.default
 
             if let h1 = dict["h1"] as? String, !h1.isEmpty {
@@ -280,7 +272,6 @@ final class ProfileInferencer: NSObject {
         }
     }
 
-    // Финальная сборка результата
     private func finalizeAll() {
         guard !isDone else { return }
         isDone = true
@@ -314,8 +305,6 @@ final class ProfileInferencer: NSObject {
         cb?(InferenceResult(host: host, profile: profile, movieCount: catalogMovieCount, log: logString()))
     }
 
-    // MARK: - Анализ каталога
-
     private func analyze() {
         guard !isDone, let webView = webView else { return }
 
@@ -344,7 +333,6 @@ final class ProfileInferencer: NSObject {
             let firstMovie = (dict["firstMovieURL"] as? String) ?? ""
             let currentURL = webView.url ?? URL(string: "https://\(self.host)/")!
 
-            // Сохраняем URL первой карточки для этапа 2
             if self.firstMovieURL == nil, !firstMovie.isEmpty {
                 if let u = URL(string: firstMovie, relativeTo: currentURL)?.absoluteURL {
                     self.firstMovieURL = u
@@ -646,7 +634,7 @@ final class ProfileInferencer: NSObject {
     })();
     """
 
-    // MARK: - JS: детальная страница
+    // MARK: - JS: детальная
 
     private static let detailCollectorJS = """
     (function(){
@@ -692,11 +680,9 @@ final class ProfileInferencer: NSObject {
       return tag;
     }
 
-    // H1
     var h1 = document.querySelector('h1');
     if (h1) out.h1 = buildSelector(h1);
 
-    // Poster: ищем img с наибольшей площадью, не в шапке/сайдбаре
     var bestImg = null, bestArea = 0;
     var imgs = document.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
@@ -705,14 +691,12 @@ final class ProfileInferencer: NSObject {
       var h = im.naturalHeight || im.clientHeight || 0;
       var src = im.getAttribute('src') || im.getAttribute('data-src') || '';
       if (!src || src.indexOf('dot.gif') !== -1 || src.indexOf('data:') === 0) continue;
-      // игнорируем явно мелкие
       if (w < 100 && h < 100) continue;
       var area = w * h;
       if (area > bestArea) { bestArea = area; bestImg = im; }
     }
     if (bestImg) out.poster = buildSelector(bestImg);
 
-    // Описание: самый длинный текстовый блок >250 символов, но не внутри nav/footer/sidebar/script/style
     function isInsideNoise(el) {
       var node = el;
       var depth = 0;
@@ -731,17 +715,10 @@ final class ProfileInferencer: NSObject {
     var cands = document.querySelectorAll('div, p, article, section');
     for (var i = 0; i < cands.length; i++) {
       var el = cands[i];
-      // пропускаем контейнеры, у которых есть вложенные div с текстом
-      var directText = '';
-      for (var c = 0; c < el.childNodes.length; c++) {
-        var ch = el.childNodes[c];
-        if (ch.nodeType === 3) directText += (ch.textContent || '');
-      }
       var fullText = (el.textContent || '').trim();
       if (fullText.length < 200) continue;
       if (fullText.length > 5000) continue;
       if (isInsideNoise(el)) continue;
-      // эвристика: если у нас есть .description/.filmDescription — используем как приоритет
       var cls = String(el.className || '').toLowerCase();
       var score = fullText.length;
       if (cls.indexOf('descr') !== -1 || cls.indexOf('filmdescr') !== -1) score += 5000;
@@ -749,7 +726,6 @@ final class ProfileInferencer: NSObject {
     }
     if (bestDesc) out.description = buildSelector(bestDesc);
 
-    // Актеры: контейнер, содержащий <b>Актеры</b>
     var allB = document.querySelectorAll('b, strong');
     for (var i = 0; i < allB.length; i++) {
       var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
@@ -760,14 +736,12 @@ final class ProfileInferencer: NSObject {
       }
     }
 
-    // infoSpans: родитель у <b>Год выпуска> / <b>Страна>
     var infoLabels = ['год выпуска', 'страна', 'жанр'];
     for (var i = 0; i < allB.length; i++) {
       var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
       if (infoLabels.indexOf(t) !== -1) {
         var container = allB[i].closest('span, div, li, p');
         if (container) {
-          // поднимаемся до общего родителя этих полей
           var parent = container.parentElement;
           if (parent) out.infoSpans = buildSelector(parent) + ' > ' + buildSelector(container);
           else out.infoSpans = buildSelector(container);
@@ -776,7 +750,6 @@ final class ProfileInferencer: NSObject {
       }
     }
 
-    // fDop: блок с <b>Качество:>
     for (var i = 0; i < allB.length; i++) {
       var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
       if (t === 'качество' || t === 'длительность' || t === 'перевод') {
@@ -790,11 +763,9 @@ final class ProfileInferencer: NSObject {
       }
     }
 
-    // Игроки: li с data-src или iframe с известными хостами
     var tabs = document.querySelectorAll('li[data-src], [data-src]');
     if (tabs.length > 0) {
-      var firstTabs = tabs[0];
-      out.playersTabs = buildSelector(firstTabs);
+      out.playersTabs = buildSelector(tabs[0]);
     }
     var ifr = document.querySelectorAll('iframe');
     for (var i = 0; i < ifr.length; i++) {
@@ -806,7 +777,6 @@ final class ProfileInferencer: NSObject {
       }
     }
 
-    // Рекомендации: контейнер с максимальным числом <a href="...N-slug.html">
     var relMap = {};
     var allLinks = document.querySelectorAll('a[href]');
     for (var i = 0; i < allLinks.length; i++) {
