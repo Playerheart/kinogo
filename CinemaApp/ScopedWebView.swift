@@ -205,16 +205,13 @@ struct ScopedWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = true }
         }
-
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             retryCount = 0
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
         }
-
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             DispatchQueue.main.async { self.isLoading.wrappedValue = false }
             guard let u = initialURL, retryCount < maxRetries else { return }
