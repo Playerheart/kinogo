@@ -32,6 +32,8 @@ struct MovieDetail: Codable {
     let genres: String
     let quality: String
     let voices: String
+    let season: String
+    let lastEpisode: String
     let players: [Player]
     let actors: [Actor]
     let related: [Movie]
