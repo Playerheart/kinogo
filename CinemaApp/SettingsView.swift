@@ -16,7 +16,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Адрес сайта") {
-                    TextField("mix.kinogo.mu", text: $hostInput)
+                    TextField("kinogo.family", text: $hostInput)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -115,13 +115,11 @@ struct SettingsView: View {
     private func saveTapped() {
         let clean = cleanHost(hostInput)
 
-        // Тот же хост — сохранять нечего, просто закрываем.
         if clean == AppConfig.host {
             dismiss()
             return
         }
 
-        // Другой хост — сначала проверяем совместимость.
         isChecking = true
         debugTitle = "Проверка совместимости"
         debugMessage = "▶ Анализирую \(clean)…"
@@ -220,7 +218,6 @@ struct SettingsView: View {
 
                 HStack(spacing: 10) {
                     Button {
-                        // Отмена: ничего не сохраняем, откатываем поле ввода
                         compatReport = nil
                         redirectHost = nil
                         hostInput = AppConfig.host
