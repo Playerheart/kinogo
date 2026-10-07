@@ -201,9 +201,8 @@ struct SettingsView: View {
         showDebug = true
 
         let targetHost = AppConfig.host
-        ProfileInferencer.shared.infer(host: targetHost) { [weak self] result in
+        ProfileInferencer.shared.infer(host: targetHost) { result in
             DispatchQueue.main.async {
-                guard let self = self else { return }
                 self.isChecking = false
 
                 if let r = result {
