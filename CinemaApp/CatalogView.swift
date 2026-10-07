@@ -7,13 +7,18 @@ enum CatalogSection: String, CaseIterable, Identifiable {
     case series = "Сериалы"
 
     var id: String { rawValue }
-    var url: URL {
+
+    var path: String {
         switch self {
-        case .films: return URL(string: "https://mix.kinogo.mu/filmy/")!
-        case .news: return URL(string: "https://mix.kinogo.mu/v1new/")!
-        case .top: return URL(string: "https://mix.kinogo.mu/top-filmy/")!
-        case .series: return URL(string: "https://mix.kinogo.mu/serialy/")!
+        case .films: return "filmy/"
+        case .news: return "v1new/"
+        case .top: return "top-filmy/"
+        case .series: return "serialy/"
         }
+    }
+
+    var url: URL {
+        AppConfig.url(path) ?? AppConfig.baseURL
     }
 }
 
@@ -25,6 +30,8 @@ struct CatalogView: View {
     @State private var suggestions: [Movie] = []
     @State private var searchTask: Task<Void, Never>?
     @State private var currentURL: URL?
+    @State private var showSettings = false
+    @State private var webViewID = UUID()
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -51,7 +58,7 @@ struct CatalogView: View {
                                 path.append(m)
                             }
                         )
-                        .id(currentURL ?? section.url)
+                        .id(webViewID)
                         .edgesIgnoringSafeArea(.bottom)
 
                         if isLoading {
@@ -96,6 +103,14 @@ struct CatalogView: View {
             .navigationDestination(for: Actor.self) { actor in
                 ActorView(actor: actor)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appConfigChanged)) { _ in
+                currentURL = nil
+                isLoading = true
+                webViewID = UUID()
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
         }
     }
 
@@ -103,7 +118,7 @@ struct CatalogView: View {
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         let q = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        currentURL = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)")
+        currentURL = AppConfig.url("index.php?do=search&subaction=search&story=\(q)")
         isLoading = true
         searchQuery = ""
         suggestions = []
@@ -111,7 +126,7 @@ struct CatalogView: View {
 
     private func fetchSuggestions(_ query: String) async {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let url = URL(string: "https://mix.kinogo.mu/index.php?do=search&subaction=search&story=\(q)") else { return }
+        guard let url = AppConfig.url("index.php?do=search&subaction=search&story=\(q)") else { return }
         do {
             let json = try await SiteParser.shared.extract(
                 from: url,
@@ -131,11 +146,9 @@ struct CatalogView: View {
     }
 
     private func reloadCurrent() {
-        if let url = URL(string: "https://mix.kinogo.mu/") {
-            currentURL = nil
-            isLoading = true
-            NotificationCenter.default.post(name: .reloadPlayer, object: url)
-        }
+        currentURL = nil
+        isLoading = true
+        webViewID = UUID()
     }
 
     private var sectionBar: some View {
@@ -147,6 +160,7 @@ struct CatalogView: View {
                             if section != s {
                                 section = s
                                 isLoading = true
+                                webViewID = UUID()
                             }
                         } label: {
                             Text(s.rawValue)
@@ -175,6 +189,18 @@ struct CatalogView: View {
                     .clipShape(Capsule())
             }
             .buttonStyle(.plain)
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.subheadline).bold()
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.white.opacity(0.08))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
             .padding(.trailing, 12)
         }
         .background(Color.black)
@@ -191,6 +217,7 @@ struct CatalogView: View {
             Button {
                 currentURL = nil
                 isLoading = true
+                webViewID = UUID()
             } label: {
                 Text("Сбросить")
                     .font(.subheadline)
