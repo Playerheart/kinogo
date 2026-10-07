@@ -2,88 +2,100 @@ import Foundation
 
 enum ExtractionScripts {
 
-    static let catalog = """
-    (function() {
-        try {
-            var lazyImgs = document.querySelectorAll('img[data-src], img[data-original], img[data-lazy], img[data-echo]');
-            for (var li = 0; li < lazyImgs.length; li++) {
-                var limg = lazyImgs[li];
-                var ds = limg.getAttribute('data-src') || limg.getAttribute('data-original') || limg.getAttribute('data-lazy') || limg.getAttribute('data-echo');
-                if (ds && (!limg.src || limg.src.indexOf('data:') === 0 || limg.src.indexOf('placeholder') !== -1)) {
-                    limg.src = ds;
+    // MARK: - Каталог
+
+    static func catalog(baseHost: String) -> String {
+        return """
+        (function() {
+            var BASE_HOST = '\(baseHost)';
+            function abs(u) {
+                if (!u) return '';
+                u = String(u).trim();
+                if (u.indexOf('//') === 0) return 'https:' + u;
+                if (u.charAt(0) === '/') return 'https://' + BASE_HOST + u;
+                return u;
+            }
+
+            try {
+                var lazyImgs = document.querySelectorAll('img[data-src]');
+                for (var li = 0; li < lazyImgs.length; li++) {
+                    var limg = lazyImgs[li];
+                    var ds = limg.getAttribute('data-src');
+                    if (ds && (!limg.src || limg.src.indexOf('dot.gif') !== -1 || limg.src.indexOf('data:') === 0)) {
+                        limg.src = ds;
+                    }
                 }
+            } catch(e) {}
+
+            var result = [];
+            var seen = {};
+            var cards = document.querySelectorAll('.shortStory');
+
+            for (var i = 0; i < cards.length; i++) {
+                var card = cards[i];
+                var h2a = card.querySelector('.sHead h2 a') || card.querySelector('h2 a');
+                if (!h2a) continue;
+                var href = h2a.getAttribute('href') || '';
+                if (!href) continue;
+                href = abs(href);
+                if (seen[href]) continue;
+                seen[href] = true;
+
+                var title = (h2a.getAttribute('title') || h2a.textContent || '').trim();
+                title = title.replace(/\\s+/g, ' ').trim();
+                if (!title || title.length < 2 || title.length > 250) continue;
+
+                var year = '';
+                var ym = title.match(/\\((\\d{4})\\)\\s*$/);
+                if (ym) year = ym[1];
+
+                if (!year) {
+                    var spans = card.querySelectorAll('.sInfo span');
+                    for (var si = 0; si < spans.length; si++) {
+                        var b = spans[si].querySelector('b');
+                        if (!b) continue;
+                        var bt = (b.textContent || '').toLowerCase();
+                        if (bt.indexOf('год') !== -1) {
+                            var txt = (spans[si].textContent || '').replace(b.textContent, '').trim();
+                            var ym2 = txt.match(/\\b(19|20)\\d{2}\\b/);
+                            if (ym2) { year = ym2[0]; break; }
+                        }
+                    }
+                }
+
+                var img = card.querySelector('.sPoster img');
+                var poster = '';
+                if (img) {
+                    var dsrc = img.getAttribute('data-src') || '';
+                    var ssrc = img.getAttribute('src') || '';
+                    if (dsrc && dsrc.indexOf('dot.gif') === -1) poster = dsrc;
+                    else if (ssrc && ssrc.indexOf('dot.gif') === -1) poster = ssrc;
+                    poster = abs(poster);
+                }
+
+                var rating = '';
+                var rs = card.querySelector('.ratingStats');
+                if (rs) {
+                    var rm = (rs.textContent || '').match(/(\\d+\\.\\d+)/);
+                    if (rm) rating = rm[1];
+                }
+
+                result.push({
+                    title: title,
+                    url: href,
+                    poster: poster,
+                    year: year,
+                    rating: rating
+                });
+
+                if (result.length >= 200) break;
             }
-        } catch(e) {}
+            return JSON.stringify(result);
+        })();
+        """
+    }
 
-        var result = [];
-        var seen = {};
-        var anchors = document.querySelectorAll('a[href]');
-
-        var skipWords = ['войти', 'регистрация', 'все ', 'далее', 'назад', 'следующая',
-                         'предыдущая', 'наверх', 'комментар', 'подписаться',
-                         'оставить', 'перейти', 'главная', 'контакты', 'поиск', 'меню',
-                         'смотреть онлайн', 'скачать'];
-
-        for (var i = 0; i < anchors.length; i++) {
-            var a = anchors[i];
-            var href = a.href || '';
-            if (!href) continue;
-            if (href.indexOf('javascript:') === 0) continue;
-            if (href.indexOf('mailto:') === 0) continue;
-            if (href.indexOf('tel:') === 0) continue;
-            if (href.indexOf('#') === 0) continue;
-
-            var isFilmLink = /\\.html($|[?#])/.test(href) ||
-                             /\\/\\d+-[\\w-]+/.test(href) ||
-                             /\\/(film|films|movie|series|serial|mult|cartoon|dorama|anime|online)/i.test(href);
-            if (!isFilmLink) continue;
-            if (seen[href]) continue;
-
-            var img = a.querySelector('img');
-            if (!img) continue;
-
-            var imgSrc = img.src || img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy') || '';
-            if (!imgSrc || imgSrc.indexOf('data:') === 0) continue;
-            if (imgSrc.indexOf('dot.gif') !== -1) continue;
-
-            var w = img.naturalWidth || parseInt(img.getAttribute('width')) || 0;
-            var h = img.naturalHeight || parseInt(img.getAttribute('height')) || 0;
-            if (w > 0 && w < 80) continue;
-            if (h > 0 && h < 80) continue;
-
-            var title = (img.alt || '').trim();
-            if (!title) {
-                var titleEl = a.querySelector('[class*="title" i], [class*="name" i], [class*="caption" i]');
-                if (titleEl) title = (titleEl.textContent || '').trim();
-            }
-            if (!title) title = (a.textContent || '').trim();
-            title = title.replace(/\\s+/g, ' ').trim();
-
-            if (!title || title.length < 2 || title.length > 250) continue;
-            var lt = title.toLowerCase();
-            var isSkip = false;
-            for (var s = 0; s < skipWords.length; s++) {
-                if (lt.indexOf(skipWords[s]) !== -1) { isSkip = true; break; }
-            }
-            if (isSkip) continue;
-
-            var text = (a.textContent || '').trim();
-            var ym = text.match(/\\b(19|20)\\d{2}\\b/);
-            var rm = text.match(/\\b[0-9]\\.[0-9]\\b/);
-
-            seen[href] = true;
-            result.push({
-                title: title.substring(0, 200),
-                url: href,
-                poster: imgSrc,
-                year: ym ? ym[0] : '',
-                rating: rm ? rm[0] : ''
-            });
-            if (result.length >= 200) break;
-        }
-        return JSON.stringify(result);
-    })();
-    """
+    // MARK: - Детальная страница
 
     static func detail(baseHost: String) -> String {
         return """
@@ -97,25 +109,15 @@ enum ExtractionScripts {
                 return u;
             }
 
-            function bgUrl(el) {
-                if (!el) return '';
-                try {
-                    var db = el.getAttribute('data-bg');
-                    if (db) return norm(db);
-                    var st = el.getAttribute('style') || '';
-                    var m = st.match(/url\\(["']?([^"')]+)["']?\\)/);
-                    if (m) return norm(m[1]);
-                } catch(e) {}
-                return '';
-            }
-
             var out = {
                 title: '', poster: '', description: '',
                 year: '', country: '', duration: '', genres: '',
                 quality: '', voices: '',
+                season: '', lastEpisode: '',
                 players: [], actors: [], related: []
             };
 
+            // ---- JSON-LD ----
             var ld = null;
             try {
                 var scripts = document.querySelectorAll('script[type="application/ld+json"]');
@@ -140,16 +142,11 @@ enum ExtractionScripts {
 
             if (ld) {
                 if (ld.name) out.title = String(ld.name).trim();
-                if (ld.image) {
-                    var img = ld.image;
-                    if (typeof img === 'string') out.poster = norm(img);
-                    else if (Array.isArray(img) && img.length > 0) {
-                        var first = img[0];
-                        out.poster = norm(typeof first === 'string' ? first : (first.url || ''));
-                    } else if (img.url) out.poster = norm(img.url);
-                }
                 if (ld.description) out.description = String(ld.description).trim().substring(0, 3000);
-                if (ld.dateCreated) out.year = String(ld.dateCreated).trim();
+                if (ld.dateCreated) {
+                    var ym = String(ld.dateCreated).match(/\\b(19|20)\\d{2}\\b/);
+                    if (ym) out.year = ym[0];
+                }
                 if (ld.countryOfOrigin) {
                     var co = ld.countryOfOrigin;
                     if (!Array.isArray(co)) co = [co];
@@ -162,61 +159,127 @@ enum ExtractionScripts {
                 if (ld.genre) {
                     var g = ld.genre;
                     if (!Array.isArray(g)) g = [g];
-                    out.genres = g.map(function(x){ return String(x).trim(); }).join(' / ');
-                }
-                if (ld.duration) {
-                    var d = String(ld.duration);
-                    var m = d.match(/PT(?:(\\d+)H)?(?:(\\d+)M)?/);
-                    if (m) {
-                        var hh = m[1] ? parseInt(m[1]) : 0;
-                        var mm = m[2] ? parseInt(m[2]) : 0;
-                        if (hh > 0) out.duration = hh + ' ч ' + mm + ' мин';
-                        else out.duration = mm + ' мин';
+                    var gs = [];
+                    for (var gi = 0; gi < g.length; gi++) {
+                        var gv = String(g[gi]).trim();
+                        if (gv) gs.push(gv.charAt(0).toUpperCase() + gv.slice(1));
                     }
+                    out.genres = gs.join(' / ');
                 }
             }
 
-            if (!out.title) {
-                var h1 = document.querySelector('h1.article__title, h1');
-                if (h1) out.title = (h1.textContent || '').trim().replace(/\\s+/g, ' ');
-            }
-            if (!out.poster) {
-                var pi = document.querySelector('.article__poster img, .movie__poster img, .poster img');
-                if (pi) out.poster = norm(pi.getAttribute('src') || pi.getAttribute('data-src') || '');
+            // ---- H1 title ----
+            var h1 = document.querySelector('.pad.sHead h1') || document.querySelector('.sHead h1') || document.querySelector('h1');
+            if (h1) {
+                var t = (h1.textContent || '').trim().replace(/\\s+/g, ' ');
+                if (t) out.title = t;
             }
 
-            function fieldByLabel(label) {
-                var items = document.querySelectorAll('.article__info > div, .ka4');
-                for (var i = 0; i < items.length; i++) {
-                    var t = (items[i].textContent || '').trim();
-                    if (t.indexOf(label) === 0 || t.indexOf(label) !== -1) {
-                        var parts = t.split(':');
-                        if (parts.length > 1) return parts.slice(1).join(':').trim();
+            // ---- Poster ----
+            var posterImg = document.querySelector('.shortStoryBody .sPoster img')
+                         || document.querySelector('.fullStory .sPoster img')
+                         || document.querySelector('.sPoster img');
+            if (posterImg) {
+                var psrc = posterImg.getAttribute('src') || posterImg.getAttribute('data-src') || '';
+                if (psrc && psrc.indexOf('dot.gif') === -1 && psrc.indexOf('noposter') === -1) {
+                    out.poster = norm(psrc);
+                }
+            }
+
+            // ---- .sInfo spans ----
+            function findSpanValue(label) {
+                var spans = document.querySelectorAll('.shortStoryBody .sInfo span');
+                for (var i = 0; i < spans.length; i++) {
+                    var b = spans[i].querySelector('b');
+                    if (!b) continue;
+                    var bText = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
+                    if (bText === label.toLowerCase()) {
+                        return (spans[i].textContent || '').replace(b.textContent, '').trim();
                     }
                 }
                 return '';
             }
-            if (!out.year) out.year = fieldByLabel('Вышел в').substring(0, 4);
-            if (!out.country) out.country = fieldByLabel('Сняли в');
-            if (!out.duration) out.duration = fieldByLabel('Длительность');
-            if (!out.genres) out.genres = fieldByLabel('Жанры');
-            out.quality = fieldByLabel('Лучшее качество');
-            out.voices = fieldByLabel('Озвучки для вас');
 
+            var vYear = findSpanValue('Год выпуска');
+            if (vYear) {
+                var ym2 = vYear.match(/\\b(19|20)\\d{2}\\b/);
+                if (ym2) out.year = ym2[0];
+            }
+            var vCountry = findSpanValue('Страна');
+            if (vCountry) out.country = vCountry;
+
+            // Genres
+            var genreSpan = null;
+            var sSpans = document.querySelectorAll('.shortStoryBody .sInfo span');
+            for (var i = 0; i < sSpans.length; i++) {
+                var b = sSpans[i].querySelector('b');
+                if (!b) continue;
+                var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
+                if (bt === 'жанр') { genreSpan = sSpans[i]; break; }
+            }
+            if (genreSpan) {
+                var gaLinks = genreSpan.querySelectorAll('a');
+                var gs2 = [];
+                for (var i = 0; i < gaLinks.length; i++) {
+                    var gv = (gaLinks[i].textContent || '').trim();
+                    if (gv) gs2.push(gv);
+                }
+                if (gs2.length) out.genres = gs2.join(' / ');
+            }
+
+            // ---- .fDop ----
+            function fieldFromFDop(label) {
+                var divs = document.querySelectorAll('.fDop > div');
+                for (var i = 0; i < divs.length; i++) {
+                    var b = divs[i].querySelector('b');
+                    if (!b) continue;
+                    var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
+                    if (bt === label.toLowerCase()) {
+                        return (divs[i].textContent || '').replace(b.textContent, '').trim();
+                    }
+                }
+                return '';
+            }
+            var q = fieldFromFDop('Качество');
+            if (q) out.quality = q;
+            var d = fieldFromFDop('Длительность');
+            if (d) out.duration = d;
+            var v = fieldFromFDop('Перевод') || fieldFromFDop('Озвучка');
+            if (v) out.voices = v;
+            var s = fieldFromFDop('Сезон');
+            if (s) out.season = s;
+            var le = fieldFromFDop('Последняя серия онлайн') || fieldFromFDop('Последняя серия');
+            if (le) out.lastEpisode = le;
+
+            // ---- Description ----
             if (!out.description) {
-                var at = document.querySelector('.article__text');
-                if (at) {
-                    var clone = at.cloneNode(true);
-                    var info = clone.querySelector('.article__info');
-                    if (info) info.remove();
-                    var imp = clone.querySelector('.article__text-important');
-                    if (imp) imp.remove();
-                    out.description = (clone.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 3000);
+                var dP = document.querySelector('.filmDescription p');
+                if (dP) {
+                    out.description = (dP.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 3000);
                 }
             }
 
-            var PLAYER_HOSTS = ['cinemar', 'kodik', 'alloha', 'bazon', 'videocdn', 'sibnet',
-                                'aniboom', 'hdvb', 'vadbam', 'pleer', 'youtube', 'youtu.be'];
+            // ---- Actors ----
+            var seenA = {};
+            var castSpans = document.querySelectorAll('.cast .sInfo span');
+            for (var ci = 0; ci < castSpans.length; ci++) {
+                var b = castSpans[ci].querySelector('b');
+                if (!b) continue;
+                var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
+                if (bt !== 'актеры') continue;
+                var aLinks = castSpans[ci].querySelectorAll('a');
+                for (var ai = 0; ai < aLinks.length; ai++) {
+                    var name = (aLinks[ai].textContent || '').trim();
+                    var aHref = norm(aLinks[ai].getAttribute('href') || '');
+                    if (!name || seenA[name]) continue;
+                    seenA[name] = true;
+                    out.actors.push({name: name, photo: '', url: aHref});
+                }
+            }
+
+            // ---- Players ----
+            var seenP = {};
+            var PLAYER_HOSTS = ['cinemar','kodik','alloha','bazon','videocdn','sibnet','aniboom','hdvb','vadbam','pleer'];
             function isPlayerUrl(u) {
                 if (!u) return false;
                 var low = u.toLowerCase();
@@ -226,99 +289,51 @@ enum ExtractionScripts {
                 return false;
             }
 
-            var seenP = {};
-
             var tabs = document.querySelectorAll('.js-player-tabs li[data-src], .player-tabs li[data-src]');
             for (var t = 0; t < tabs.length; t++) {
-                var tab = tabs[t];
-                var src = norm(tab.getAttribute('data-src') || '');
+                var src = norm(tabs[t].getAttribute('data-src') || '');
                 if (!src || !isPlayerUrl(src) || seenP[src]) continue;
                 seenP[src] = true;
-                var tabName = (tab.textContent || '').trim() || ('Плеер ' + (out.players.length + 1));
-                out.players.push({ name: tabName, url: src });
+                var tabName = (tabs[t].textContent || '').trim() || ('Плеер ' + (out.players.length + 1));
+                out.players.push({name: tabName, url: src});
             }
 
-            var iframes = document.querySelectorAll('iframe');
+            var iframes = document.querySelectorAll('.js-player-container iframe, iframe');
             for (var i = 0; i < iframes.length; i++) {
-                var f = iframes[i];
-                var src = norm(f.getAttribute('src') || '');
-                if (!src) src = norm(f.getAttribute('data-src') || '');
-                if (!src || seenP[src] || !isPlayerUrl(src)) continue;
-                seenP[src] = true;
-                var name = (f.getAttribute('title') || '').trim() || ('Плеер ' + (out.players.length + 1));
-                out.players.push({ name: name, url: src });
+                var src2 = norm(iframes[i].getAttribute('src') || '');
+                if (!src2 || !isPlayerUrl(src2) || seenP[src2]) continue;
+                seenP[src2] = true;
+                out.players.push({name: 'Плеер ' + (out.players.length + 1), url: src2});
             }
 
-            var trailerBtn = document.querySelector('.js-player-trailer');
-            if (trailerBtn) {
-                var tSrc = norm(trailerBtn.getAttribute('data-src') || '');
-                if (tSrc && !seenP[tSrc] && isPlayerUrl(tSrc)) {
-                    seenP[tSrc] = true;
-                    out.players.push({ name: 'Трейлер', url: tSrc });
-                }
-            }
-
-            var seenA = {};
-            var sections = document.querySelectorAll('.persons__section');
-            for (var si = 0; si < sections.length; si++) {
-                var section = sections[si];
-                var items = section.querySelectorAll('a.js-person, a.persons__item');
-                for (var ai = 0; ai < items.length; ai++) {
-                    var a = items[ai];
-                    var aHref = norm(a.href || '');
-                    var name = (a.getAttribute('title') || '').trim();
-                    if (!name) {
-                        var cclone = a.cloneNode(true);
-                        var fdiv = cclone.querySelector('.persons__foto');
-                        if (fdiv) fdiv.remove();
-                        name = (cclone.textContent || '').trim().replace(/\\s+/g, ' ');
-                    }
-                    if (!name || name.length > 100) continue;
-
-                    var photo = '';
-                    var fotoEl = a.querySelector('.persons__foto');
-                    if (fotoEl) {
-                        photo = bgUrl(fotoEl);
-                        if (photo.indexOf('no_actors') !== -1 || photo.indexOf('dot.gif') !== -1) photo = '';
-                    }
-
-                    if (seenA[name]) continue;
-                    seenA[name] = true;
-                    out.actors.push({ name: name, photo: photo, url: aHref });
-                }
-            }
-
+            // ---- Recommendations ----
             var seenR = {};
-            var relEls = document.querySelectorAll('.relatednews__content a.relatednews__item, a.relatednews__item');
-            for (var ri = 0; ri < relEls.length; ri++) {
-                var rel = relEls[ri];
-                var rHref = norm(rel.href || '');
+            var relItems = document.querySelectorAll('.viewMore-wrap .relatedItem a, .viewMore .relatedItem a');
+            for (var ri = 0; ri < relItems.length; ri++) {
+                var rel = relItems[ri];
+                var rHref = norm(rel.getAttribute('href') || '');
                 if (!rHref || seenR[rHref]) continue;
                 seenR[rHref] = true;
 
-                var rImg = rel.querySelector('img.relatednews__image, img');
+                var rImg = rel.querySelector('img');
                 var rPoster = '';
                 if (rImg) {
-                    rPoster = norm(rImg.getAttribute('data-src') || rImg.getAttribute('src') || '');
-                    if (rPoster.indexOf('dot.gif') !== -1) rPoster = '';
+                    var rsrc = rImg.getAttribute('data-src') || rImg.getAttribute('src') || '';
+                    if (rsrc && rsrc.indexOf('dot.gif') === -1) rPoster = norm(rsrc);
                 }
+                var rSpan = rel.querySelector('span.ta-center') || rel.querySelector('span');
+                var rTitle = rSpan ? (rSpan.textContent || '').trim() : '';
+                if (!rTitle) rTitle = (rel.getAttribute('title') || '').trim();
 
-                var rTitle = (rel.getAttribute('title') || '').trim();
-                if (!rTitle && rImg) rTitle = (rImg.alt || '').trim();
-                if (!rTitle) {
-                    var rClone = rel.cloneNode(true);
-                    var rcImg = rClone.querySelector('img');
-                    if (rcImg) rcImg.remove();
-                    rTitle = (rClone.textContent || '').trim().replace(/\\s+/g, ' ');
-                }
-                if (!rTitle || rTitle.length > 200) continue;
+                var rYear = '';
+                var rym = rTitle.match(/\\((\\d{4})\\)/);
+                if (rym) rYear = rym[1];
 
-                var rm = rTitle.match(/\\((\\d{4})\\)/);
                 out.related.push({
                     title: rTitle,
                     url: rHref,
                     poster: rPoster,
-                    year: rm ? rm[1] : '',
+                    year: rYear,
                     rating: ''
                 });
                 if (out.related.length >= 20) break;
