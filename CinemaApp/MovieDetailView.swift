@@ -14,7 +14,7 @@ final class MovieDetailViewModel: ObservableObject {
             guard let url = URL(string: movie.url) else { throw ParserError.noData }
             let json = try await SiteParser.shared.extract(
                 from: url,
-                js: ExtractionScripts.detail(baseHost: AppConfig.host),
+                js: ExtractionScripts.detail(profile: AppConfig.profile),
                 waitAfterLoad: 4.0
             )
             guard let data = json.data(using: .utf8) else { throw ParserError.invalidResult }
