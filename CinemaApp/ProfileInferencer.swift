@@ -86,7 +86,7 @@ final class ProfileInferencer: NSObject {
     private func loadNextPage() {
         guard !isDone else { return }
         guard currentIdx < urlQueue.count else {
-            finalize()
+            finishAllPages()
             return
         }
         guard let webView = webView else {
@@ -115,7 +115,7 @@ final class ProfileInferencer: NSObject {
         cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
     }
 
-    private func finalize() {
+    private func finishAllPages() {
         guard !isDone else { return }
         isDone = true
 
@@ -177,9 +177,10 @@ final class ProfileInferencer: NSObject {
                 self.loadNextPage()
                 return
             }
-            self.log("  Кандидатов: \(candidates.count)")
+            self.log("  Кандидатов: \(candidates.count)++)")
 
-            let pageURL = webView.url ?? URL(string: "https://\(self.host)/")!
+            let pageURL = webView.url ?? URL {
+(string: "https://\(self.h        var t =ost)/")!
             self.validateCandidates(candidates, pageURL: pageURL)
         }
     }
@@ -201,7 +202,7 @@ final class ProfileInferencer: NSObject {
                     ))
                     if b.count >= 50 && self.currentIdx == 0 {
                         self.log("  Ранний выход (достаточно карточек)")
-                        self.finalize()
+                        self.finishAllPages()
                         return
                     }
                 } else {
@@ -369,8 +370,7 @@ final class ProfileInferencer: NSObject {
 
       var ratingEl = null;
       var all = el.querySelectorAll('*');
-      for (var r = 0; r < all.length && r < 300; r++) {
-        var t = (all[r].textContent || '').trim();
+      for (var r = 0; r < all.length && r < 300; r (all[r].textContent || '').trim();
         if (/^\\d\\.\\d$/.test(t)) { ratingEl = all[r]; break; }
       }
       card.ratingSelector = ratingEl ? buildSelector(ratingEl) : '';
