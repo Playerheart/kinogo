@@ -4,7 +4,7 @@ import WebKit
 struct InferenceResult {
     let host: String
     let profile: SiteProfile
-    let movieCount: Int   // 0 = провал, >0 = успех
+    let movieCount: Int
     let log: String
 }
 
@@ -22,8 +22,6 @@ final class ProfileInferencer: NSObject {
         super.init()
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        // Картинки НЕ блокируем — иначе lazy-load на сайте может не сработать,
-        // и каталог будет пустым. Жертвуем скоростью ради надёжности.
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
@@ -44,32 +42,23 @@ final class ProfileInferencer: NSObject {
         webView.stopLoading()
         webView.load(URLRequest(url: url))
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 45) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 50) { [weak self] in
             guard let self = self, !self.isDone else { return }
-            self.finishFailure(reason: "Таймаут 45 секунд")
+            self.finishFailure(reason: "Таймаут 50 секунд")
         }
     }
 
     private func log(_ msg: String) {
         diagLog.append(msg)
-        print("[ProfileInferencer] \(msg)")
     }
 
-    private func logString() -> String {
-        return diagLog.joined(separator: "\n")
-    }
+    private func logString() -> String { diagLog.joined(separator: "\n") }
 
     private func finishFailure(reason: String) {
         guard !isDone else { return }
         isDone = true
         log("❌ \(reason)")
-        let result = InferenceResult(
-            host: host,
-            profile: SiteProfile.default,
-            movieCount: 0,
-            log: logString()
-        )
-        completion?(result)
+        completion?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
         completion = nil
     }
 
@@ -77,13 +66,8 @@ final class ProfileInferencer: NSObject {
         guard !isDone else { return }
         isDone = true
         log(detail)
-        let result = InferenceResult(
-            host: host,
-            profile: profile,
-            movieCount: movieCount,
-            log: logString()
-        )
-        completion?(result)
+        log("Профиль: card=\(profile.catalogCard)  title=\(profile.catalogTitleLink)  poster=\(profile.catalogPosterImg)")
+        completion?(InferenceResult(host: host, profile: profile, movieCount: movieCount, log: logString()))
         completion = nil
     }
 
@@ -167,7 +151,7 @@ final class ProfileInferencer: NSObject {
                         return !t.isEmpty && !u.isEmpty
                     }.count
                 }
-                self.log("  • card=.\(cardClass) title=\"\(titleSel)\" poster=\"\(posterSel)\" → \(count) фильмов")
+                self.log("  • .\(cardClass)  t=\"\(titleSel)\"  p=\"\(posterSel)\"  → \(count)")
                 if best == nil || count > best!.count {
                     best = (profile, count, cardClass)
                 }
@@ -179,19 +163,28 @@ final class ProfileInferencer: NSObject {
 
     private func buildProfile(from cand: [String: Any]) -> SiteProfile {
         var p = SiteProfile.default
+
         if let card = cand["cardClass"] as? String, !card.isEmpty {
             p.catalogCard = ".\(card)"
         }
-        if let title = cand["titleSelector"] as? String, !title.isEmpty {
+        // Заменяем title/poster/rating ТОЛЬКО если селектор реально содержит
+        // класс/потомка/атрибут. Иначе инференсер возвращает tag-only ("a", "img")
+        // и затирает хороший дефолт.
+        if let title = cand["titleSelector"] as? String, isRealSelector(title) {
             p.catalogTitleLink = title
         }
-        if let poster = cand["posterSelector"] as? String, !poster.isEmpty {
+        if let poster = cand["posterSelector"] as? String, isRealSelector(poster) {
             p.catalogPosterImg = poster
         }
-        if let rating = cand["ratingSelector"] as? String, !rating.isEmpty {
+        if let rating = cand["ratingSelector"] as? String, isRealSelector(rating) {
             p.catalogRating = rating
         }
         return p
+    }
+
+    private func isRealSelector(_ s: String) -> Bool {
+        if s.isEmpty { return false }
+        return s.contains(".") || s.contains(" ") || s.contains(">") || s.contains("[")
     }
 
     // MARK: - JS: сбор кандидатов
@@ -244,21 +237,40 @@ final class ProfileInferencer: NSObject {
     arr.sort(function(a,b){return b.count - a.count});
     arr = arr.slice(0, 6);
 
+    function classesOf(el) {
+      var cls = String(el.className || '').trim();
+      if (!cls) return [];
+      return cls.split(/\\s+/).filter(function(p){return p.length >= 3});
+    }
+
     function buildSelector(el) {
       if (!el) return '';
       var tag = el.tagName.toLowerCase();
-      var cls = String(el.className || '').trim();
-      if (!cls) return tag;
-      var parts = cls.split(/\\s+/).filter(function(p){return p.length >= 3});
-      if (parts.length === 0) return tag;
-      parts.sort(function(a,b){return b.length - a.length});
-      return tag + '.' + parts[0];
+      var parts = classesOf(el);
+      if (parts.length > 0) {
+        parts.sort(function(a,b){return b.length - a.length});
+        return tag + '.' + parts[0];
+      }
+      // Нет класса — поднимаемся до ближайшего родителя с классом
+      var node = el.parentElement;
+      var depth = 0;
+      while (node && node !== document.body && depth < 4) {
+        var pcls = classesOf(node);
+        if (pcls.length > 0) {
+          pcls.sort(function(a,b){return b.length - a.length});
+          return node.tagName.toLowerCase() + '.' + pcls[0] + ' ' + tag;
+        }
+        node = node.parentElement;
+        depth++;
+      }
+      return tag;
     }
 
     for (var i = 0; i < arr.length; i++) {
       var el = arr[i].el;
       var card = { cardClass: arr[i].cardClass, count: arr[i].count };
 
+      // title: предпочитаем <a> внутри h1-h4, иначе первый <a> с осмысленным текстом
       var titleEl = null;
       var hEls = el.querySelectorAll('h1, h2, h3, h4');
       for (var h = 0; h < hEls.length; h++) {
@@ -303,7 +315,7 @@ extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         log("→ Загрузка завершена: \(webView.url?.absoluteString ?? "?")")
         guard !isDone else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
             self?.analyze()
         }
     }
