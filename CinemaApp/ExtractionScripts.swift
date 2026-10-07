@@ -4,17 +4,28 @@ enum ExtractionScripts {
 
     // MARK: - Каталог
 
-    static func catalog(baseHost: String) -> String {
+    static func catalog(profile: SiteProfile) -> String {
+        let yearFromTitle = profile.catalogYearFromTitle ? "true" : "false"
         return """
         (function() {
-            var BASE_HOST = '\(baseHost)';
-            function abs(u) {
+            var PROFILE = {
+                card: '\(profile.catalogCard)',
+                titleLink: '\(profile.catalogTitleLink)',
+                posterImg: '\(profile.catalogPosterImg)',
+                rating: '\(profile.catalogRating)',
+                infoSpans: '\(profile.catalogInfoSpans)',
+                yearFromTitle: \(yearFromTitle),
+                maxCards: \(profile.catalogMaxCards)
+            };
+
+            function abs(u, baseHost) {
                 if (!u) return '';
                 u = String(u).trim();
                 if (u.indexOf('//') === 0) return 'https:' + u;
-                if (u.charAt(0) === '/') return 'https://' + BASE_HOST + u;
+                if (u.charAt(0) === '/') return 'https://' + baseHost + u;
                 return u;
             }
+            var BASE_HOST = location.hostname || '';
 
             try {
                 var lazyImgs = document.querySelectorAll('img[data-src]');
@@ -29,15 +40,15 @@ enum ExtractionScripts {
 
             var result = [];
             var seen = {};
-            var cards = document.querySelectorAll('.shortStory');
+            var cards = document.querySelectorAll(PROFILE.card);
 
             for (var i = 0; i < cards.length; i++) {
                 var card = cards[i];
-                var h2a = card.querySelector('.sHead h2 a') || card.querySelector('h2 a');
+                var h2a = card.querySelector(PROFILE.titleLink);
                 if (!h2a) continue;
                 var href = h2a.getAttribute('href') || '';
                 if (!href) continue;
-                href = abs(href);
+                href = abs(href, BASE_HOST);
                 if (seen[href]) continue;
                 seen[href] = true;
 
@@ -46,11 +57,13 @@ enum ExtractionScripts {
                 if (!title || title.length < 2 || title.length > 250) continue;
 
                 var year = '';
-                var ym = title.match(/\\((\\d{4})\\)\\s*$/);
-                if (ym) year = ym[1];
+                if (PROFILE.yearFromTitle) {
+                    var ym = title.match(/\\((\\d{4})\\)\\s*$/);
+                    if (ym) year = ym[1];
+                }
 
                 if (!year) {
-                    var spans = card.querySelectorAll('.sInfo span');
+                    var spans = card.querySelectorAll(PROFILE.infoSpans);
                     for (var si = 0; si < spans.length; si++) {
                         var b = spans[si].querySelector('b');
                         if (!b) continue;
@@ -63,18 +76,18 @@ enum ExtractionScripts {
                     }
                 }
 
-                var img = card.querySelector('.sPoster img');
+                var img = card.querySelector(PROFILE.posterImg);
                 var poster = '';
                 if (img) {
                     var dsrc = img.getAttribute('data-src') || '';
                     var ssrc = img.getAttribute('src') || '';
                     if (dsrc && dsrc.indexOf('dot.gif') === -1) poster = dsrc;
                     else if (ssrc && ssrc.indexOf('dot.gif') === -1) poster = ssrc;
-                    poster = abs(poster);
+                    poster = abs(poster, BASE_HOST);
                 }
 
                 var rating = '';
-                var rs = card.querySelector('.ratingStats');
+                var rs = card.querySelector(PROFILE.rating);
                 if (rs) {
                     var rm = (rs.textContent || '').match(/(\\d+\\.\\d+)/);
                     if (rm) rating = rm[1];
@@ -88,7 +101,7 @@ enum ExtractionScripts {
                     rating: rating
                 });
 
-                if (result.length >= 200) break;
+                if (result.length >= PROFILE.maxCards) break;
             }
             return JSON.stringify(result);
         })();
@@ -97,10 +110,24 @@ enum ExtractionScripts {
 
     // MARK: - Детальная страница
 
-    static func detail(baseHost: String) -> String {
+    static func detail(profile: SiteProfile) -> String {
+        let hostsJS = profile.playerHosts.map { "\"\($0)\"" }.joined(separator: ",")
         return """
         (function() {
-            var BASE_HOST = '\(baseHost)';
+            var PROFILE = {
+                h1: '\(profile.detailH1)',
+                posterImg: '\(profile.detailPosterImg)',
+                infoSpans: '\(profile.detailInfoSpans)',
+                fDop: '\(profile.detailFDop)',
+                description: '\(profile.detailDescription)',
+                actorsContainer: '\(profile.detailActorsContainer)',
+                playersTabs: '\(profile.detailPlayersTabs)',
+                playersContainer: '\(profile.detailPlayersContainer)',
+                related: '\(profile.detailRelated)',
+                playerHosts: [\(hostsJS)]
+            };
+
+            var BASE_HOST = location.hostname || '';
             function norm(u) {
                 if (!u) return '';
                 u = String(u).trim();
@@ -169,16 +196,14 @@ enum ExtractionScripts {
             }
 
             // ---- H1 title ----
-            var h1 = document.querySelector('.pad.sHead h1') || document.querySelector('.sHead h1') || document.querySelector('h1');
+            var h1 = document.querySelector(PROFILE.h1);
             if (h1) {
                 var t = (h1.textContent || '').trim().replace(/\\s+/g, ' ');
                 if (t) out.title = t;
             }
 
             // ---- Poster ----
-            var posterImg = document.querySelector('.shortStoryBody .sPoster img')
-                         || document.querySelector('.fullStory .sPoster img')
-                         || document.querySelector('.sPoster img');
+            var posterImg = document.querySelector(PROFILE.posterImg);
             if (posterImg) {
                 var psrc = posterImg.getAttribute('src') || posterImg.getAttribute('data-src') || '';
                 if (psrc && psrc.indexOf('dot.gif') === -1 && psrc.indexOf('noposter') === -1) {
@@ -186,9 +211,9 @@ enum ExtractionScripts {
                 }
             }
 
-            // ---- .sInfo spans ----
+            // ---- infoSpans ----
             function findSpanValue(label) {
-                var spans = document.querySelectorAll('.shortStoryBody .sInfo span');
+                var spans = document.querySelectorAll(PROFILE.infoSpans);
                 for (var i = 0; i < spans.length; i++) {
                     var b = spans[i].querySelector('b');
                     if (!b) continue;
@@ -208,9 +233,8 @@ enum ExtractionScripts {
             var vCountry = findSpanValue('Страна');
             if (vCountry) out.country = vCountry;
 
-            // Genres
             var genreSpan = null;
-            var sSpans = document.querySelectorAll('.shortStoryBody .sInfo span');
+            var sSpans = document.querySelectorAll(PROFILE.infoSpans);
             for (var i = 0; i < sSpans.length; i++) {
                 var b = sSpans[i].querySelector('b');
                 if (!b) continue;
@@ -227,9 +251,8 @@ enum ExtractionScripts {
                 if (gs2.length) out.genres = gs2.join(' / ');
             }
 
-            // ---- .fDop ----
             function fieldFromFDop(label) {
-                var divs = document.querySelectorAll('.fDop > div');
+                var divs = document.querySelectorAll(PROFILE.fDop);
                 for (var i = 0; i < divs.length; i++) {
                     var b = divs[i].querySelector('b');
                     if (!b) continue;
@@ -251,17 +274,15 @@ enum ExtractionScripts {
             var le = fieldFromFDop('Последняя серия онлайн') || fieldFromFDop('Последняя серия');
             if (le) out.lastEpisode = le;
 
-            // ---- Description ----
             if (!out.description) {
-                var dP = document.querySelector('.filmDescription p');
+                var dP = document.querySelector(PROFILE.description);
                 if (dP) {
                     out.description = (dP.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 3000);
                 }
             }
 
-            // ---- Actors ----
             var seenA = {};
-            var castSpans = document.querySelectorAll('.cast .sInfo span');
+            var castSpans = document.querySelectorAll(PROFILE.actorsContainer);
             for (var ci = 0; ci < castSpans.length; ci++) {
                 var b = castSpans[ci].querySelector('b');
                 if (!b) continue;
@@ -277,19 +298,17 @@ enum ExtractionScripts {
                 }
             }
 
-            // ---- Players ----
             var seenP = {};
-            var PLAYER_HOSTS = ['cinemar','kodik','alloha','bazon','videocdn','sibnet','aniboom','hdvb','vadbam','pleer'];
             function isPlayerUrl(u) {
                 if (!u) return false;
                 var low = u.toLowerCase();
-                for (var i = 0; i < PLAYER_HOSTS.length; i++) {
-                    if (low.indexOf(PLAYER_HOSTS[i]) !== -1) return true;
+                for (var i = 0; i < PROFILE.playerHosts.length; i++) {
+                    if (low.indexOf(PROFILE.playerHosts[i]) !== -1) return true;
                 }
                 return false;
             }
 
-            var tabs = document.querySelectorAll('.js-player-tabs li[data-src], .player-tabs li[data-src]');
+            var tabs = document.querySelectorAll(PROFILE.playersTabs);
             for (var t = 0; t < tabs.length; t++) {
                 var src = norm(tabs[t].getAttribute('data-src') || '');
                 if (!src || !isPlayerUrl(src) || seenP[src]) continue;
@@ -298,7 +317,7 @@ enum ExtractionScripts {
                 out.players.push({name: tabName, url: src});
             }
 
-            var iframes = document.querySelectorAll('.js-player-container iframe, iframe');
+            var iframes = document.querySelectorAll(PROFILE.playersContainer);
             for (var i = 0; i < iframes.length; i++) {
                 var src2 = norm(iframes[i].getAttribute('src') || '');
                 if (!src2 || !isPlayerUrl(src2) || seenP[src2]) continue;
@@ -306,9 +325,8 @@ enum ExtractionScripts {
                 out.players.push({name: 'Плеер ' + (out.players.length + 1), url: src2});
             }
 
-            // ---- Recommendations ----
             var seenR = {};
-            var relItems = document.querySelectorAll('.viewMore-wrap .relatedItem a, .viewMore .relatedItem a');
+            var relItems = document.querySelectorAll(PROFILE.related);
             for (var ri = 0; ri < relItems.length; ri++) {
                 var rel = relItems[ri];
                 var rHref = norm(rel.getAttribute('href') || '');
