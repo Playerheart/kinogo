@@ -20,6 +20,7 @@ final class ProfileInferencer: NSObject {
     private var urlQueue: [URL] = []
     private var currentIdx = 0
     private var currentPageLabel: String = ""
+    private var enqueuedURLs: Set<String> = []
 
     private struct PageResult {
         let label: String
@@ -39,7 +40,7 @@ final class ProfileInferencer: NSObject {
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
-        wv.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        wv.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"
         self.webView = wv
     }
 
@@ -52,33 +53,38 @@ final class ProfileInferencer: NSObject {
             self.isDone = false
             self.diagLog = []
             self.pageResults = []
+            self.enqueuedURLs = []
 
-            let candidates: [(String, String)] = [
-                ("filmy/", "Фильмы"),
-                ("serialy/", "Сериалы"),
-                ("novinki/", "Новинки"),
-                ("", "Главная")
-            ]
-
+            let starts: [String] = ["filmy/", "serialy/", "novinki/"]
             var urls: [URL] = []
-            for (path, _) in candidates {
+            for path in starts {
                 if let u = URL(string: "https://\(host)/\(path)") {
                     urls.append(u)
+                    self.enqueuedURLs.insert(u.absoluteString)
                 }
             }
             self.urlQueue = urls
             self.currentIdx = 0
 
             self.log("Хост: \(host)")
-            self.log("Буду проверять: \(candidates.map { $0.0.isEmpty ? "(главная)" : $0.0 }.joined(separator: ", "))")
+            self.log("UA: десктопный Safari")
+            self.log("Стартовые страницы: \(starts.joined(separator: ", "))")
 
             self.loadNextPage()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
                 guard let self = self, !self.isDone else { return }
-                self.finishFailure(reason: "Таймаут 120 секунд")
+                self.finishFailure(reason: "Таймаут 180 секунд")
             }
         }
+    }
+
+    private func enqueue(_ url: URL, reason: String) {
+        let key = url.absoluteString
+        guard !enqueuedURLs.contains(key) else { return }
+        enqueuedURLs.insert(key)
+        urlQueue.append(url)
+        log("  + \(reason): \(url.path)")
     }
 
     private func loadNextPage() {
@@ -93,7 +99,7 @@ final class ProfileInferencer: NSObject {
         }
         let url = urlQueue[currentIdx]
         currentPageLabel = url.path.isEmpty ? "главная" : url.path
-        log("── Страница \(currentIdx + 1)/\(urlQueue.count): \(url.absoluteString)")
+        log("── [\(currentIdx + 1)/\(urlQueue.count)] \(url.absoluteString)")
         webView.stopLoading()
         webView.load(URLRequest(url: url))
     }
@@ -143,7 +149,6 @@ final class ProfileInferencer: NSObject {
 
     private func analyze() {
         guard !isDone, let webView = webView else { return }
-        log("  Анализирую DOM…")
 
         webView.evaluateJavaScript(ProfileInferencer.collectorJS) { [weak self] result, error in
             guard let self = self, !self.isDone else { return }
@@ -166,10 +171,36 @@ final class ProfileInferencer: NSObject {
 
             let movieLinksCount = (dict["movieLinksCount"] as? Int) ?? 0
             let pageTitle = (dict["title"] as? String) ?? "?"
-            let scrolled = (dict["scrolled"] as? Bool) ?? false
+            let paginationLinks = (dict["paginationLinks"] as? [String]) ?? []
+            let currentURL = webView.url ?? URL(string: "https://\(self.host)/")!
+
             self.log("  Заголовок: \(pageTitle)")
-            self.log("  Скроллилось: \(scrolled ? "да" : "нет")")
             self.log("  Ссылок /NNN-slug.html: \(movieLinksCount)")
+            self.log("  Ссылок пагинации: \(paginationLinks.count)")
+            if !paginationLinks.isEmpty {
+                let sample = paginationLinks.prefix(6).joined(separator: ", ")
+                self.log("  Примеры: \(sample)")
+            }
+
+            // 1) Добавляем найденные ссылки пагинации
+            for href in paginationLinks {
+                guard let u = URL(string: href, relativeTo: currentURL)?.absoluteURL else { continue }
+                self.enqueue(u, reason: "пагинация")
+            }
+
+            // 2) Fallback: если это top-level каталог и ссылки пагинации не нашлись,
+            //    генерируем /page/2/..6/ вручную.
+            let path = currentURL.path
+            let isTopLevelCatalog = (path == "/filmy/" || path == "/serialy/" || path == "/novinki/")
+            if isTopLevelCatalog && paginationLinks.isEmpty {
+                self.log("  ⚠️ Ссылок пагинации нет — генерирую /page/2/../page/6/")
+                let base = path.hasSuffix("/") ? String(path.dropLast()) : path  // /filmy
+                for n in 2...6 {
+                    if let u = URL(string: "https://\(self.host)\(base)/page/\(n)/") {
+                        self.enqueue(u, reason: "page/\(n)/")
+                    }
+                }
+            }
 
             guard let candidates = dict["candidates"] as? [[String: Any]], !candidates.isEmpty else {
                 self.log("  Кандидатов нет — пропускаю страницу")
@@ -177,10 +208,8 @@ final class ProfileInferencer: NSObject {
                 self.loadNextPage()
                 return
             }
-            self.log("  Кандидатов: \(candidates.count)")
 
-            let pageURL = webView.url ?? URL(string: "https://\(self.host)/")!
-            self.validateCandidates(candidates, pageURL: pageURL)
+            self.validateCandidates(candidates, pageURL: currentURL)
         }
     }
 
@@ -192,21 +221,21 @@ final class ProfileInferencer: NSObject {
             if isDone { return }
             guard idx < candidates.count else {
                 if let b = bestOnPage, b.count > 0 {
-                    self.log("  ✅ Лучший на этой странице: .\(b.cardClass) → \(b.count)")
+                    self.log("  ✅ .\(b.cardClass) → \(b.count)")
                     self.pageResults.append(PageResult(
                         label: self.currentPageLabel,
                         url: pageURL,
                         profile: b.profile,
                         count: b.count
                     ))
-                    // Ранний выход только если >100 карточек — точно полный каталог
-                    if b.count >= 100 && self.currentIdx == 0 {
-                        self.log("  Ранний выход (достаточно карточек)")
+                    // Ранний выход: если на первой странице каталога поймали >= 50 — не идём дальше
+                    if b.count >= 50 {
+                        self.log("  Ранний выход (>= 50 карточек)")
                         self.finishAllPages()
                         return
                     }
                 } else {
-                    self.log("  ⚠️ Все кандидаты дали 0 фильмов")
+                    self.log("  ⚠️ Все кандидаты дали 0")
                 }
                 self.currentIdx += 1
                 self.loadNextPage()
@@ -266,54 +295,19 @@ final class ProfileInferencer: NSObject {
         return s.contains(".") || s.contains(" ") || s.contains(">") || s.contains("[")
     }
 
-    // MARK: - JS: сбор кандидатов + скролл для lazy-load
+    // MARK: - JS: сбор кандидатов + пагинация
 
     private static let collectorJS = """
     (function(){
-    var out = { url: location.href, title: document.title, movieLinksCount: 0, candidates: [], scrolled: false };
+    var out = {
+      url: location.href,
+      title: document.title,
+      movieLinksCount: 0,
+      candidates: [],
+      paginationLinks: []
+    };
 
-    function countMovieLinks() {
-      var links = document.querySelectorAll('a[href]');
-      var count = 0;
-      for (var i = 0; i < links.length; i++) {
-        var h = links[i].getAttribute('href') || '';
-        if (/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) count++;
-      }
-      return count;
-    }
-
-    // ---- Авто-скролл для срабатывания lazy-load ----
-    var scrolled = false;
-    try {
-      var before = countMovieLinks();
-      // Три итерации скролла вниз
-      window.scrollTo(0, document.body.scrollHeight * 0.5);
-      window.scrollTo(0, document.body.scrollHeight);
-      // Проскроллим каждый контейнер, у которого есть overflow
-      var potential = document.querySelectorAll('.shortStory, .sectBody, .mainWrap, [class*="lazy"]');
-      for (var i = 0; i < potential.length && i < 200; i++) {
-        try { potential[i].scrollIntoView(); } catch(e) {}
-      }
-      window.scrollTo(0, 0);
-      var after = countMovieLinks();
-      if (after > before) scrolled = true;
-    } catch(e) {}
-    out.scrolled = scrolled;
-
-    // Попытка кликнуть «Показать ещё» / «Загрузить ещё»
-    try {
-      var moreBtns = document.querySelectorAll('a, button');
-      for (var i = 0; i < moreBtns.length && i < 500; i++) {
-        var t = (moreBtns[i].textContent || '').toLowerCase();
-        if (t.indexOf('показать ещё') !== -1 || t.indexOf('загрузить ещё') !== -1 ||
-            t.indexOf('показать еще') !== -1 || t.indexOf('загрузить еще') !== -1 ||
-            t.indexOf('load more') !== -1) {
-          try { moreBtns[i].click(); } catch(e) {}
-        }
-      }
-    } catch(e) {}
-
-    // ---- Сбор карточек ----
+    // ---- Сбор ссылок на фильмы ----
     var movieLinks = [];
     var allLinks = document.querySelectorAll('a[href]');
     for (var i = 0; i < allLinks.length && i < 10000; i++) {
@@ -323,8 +317,58 @@ final class ProfileInferencer: NSObject {
       }
     }
     out.movieLinksCount = movieLinks.length;
+
+    // ---- Сбор ссылок пагинации ----
+    var pagSet = {};
+    function addPag(href) {
+      if (!href) return;
+      if (href.indexOf('javascript:') === 0) return;
+      if (href === '#' || href.indexOf('#') === 0) return;
+      pagSet[href] = true;
+    }
+
+    // 1) Ссылки в контейнерах пагинации
+    try {
+      var containers = document.querySelectorAll(
+        '.navigation, .pagination, .pagenav, .pages, .navig, ' +
+        '.pageNavigation, .module-pagination, .pagi, .pager, ' +
+        '[class*="pagination"], [class*="pagenav"], [class*="page-nav"]'
+      );
+      for (var c = 0; c < containers.length; c++) {
+        var ls = containers[c].querySelectorAll('a[href]');
+        for (var l = 0; l < ls.length; l++) {
+          addPag(ls[l].getAttribute('href'));
+        }
+      }
+    } catch(e) {}
+
+    // 2) Ссылки с /page/ или ?page=
+    try {
+      for (var i = 0; i < allLinks.length; i++) {
+        var h = allLinks[i].getAttribute('href') || '';
+        if (h.indexOf('/page/') !== -1 || h.indexOf('?page=') !== -1 || h.indexOf('&page=') !== -1) {
+          addPag(h);
+        }
+      }
+    } catch(e) {}
+
+    // 3) Ссылки с числовым текстом (2, 3, 4, ...)
+    try {
+      for (var i = 0; i < allLinks.length; i++) {
+        var t = (allLinks[i].textContent || '').trim();
+        if (/^\\d{1,3}$/.test(t)) {
+          addPag(allLinks[i].getAttribute('href'));
+        }
+      }
+    } catch(e) {}
+
+    for (var k in pagSet) {
+      out.paginationLinks.push(k);
+    }
+
     if (movieLinks.length < 3) return JSON.stringify(out);
 
+    // ---- Кандидаты-карточки ----
     var classVotes = {};
     for (var i = 0; i < Math.min(movieLinks.length, 60); i++) {
       var link = movieLinks[i];
@@ -434,20 +478,8 @@ extension ProfileInferencer: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !isDone else { return }
-        // Даём странице прогрузиться, потом скроллим и снова ждём,
-        // потом уже собираем DOM. Так срабатывает lazy-load карточек.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-            guard let self = self, !self.isDone else { return }
-            self.webView?.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);") { _, _ in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                    guard let self = self, !self.isDone else { return }
-                    self.webView?.evaluateJavaScript("window.scrollTo(0, document.body.scrollHeight);") { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                            self?.analyze()
-                        }
-                    }
-                }
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
+            self?.analyze()
         }
     }
 
