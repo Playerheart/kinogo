@@ -16,7 +16,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
 
-        // 1. JS hunter — перехват URL, чтение озвучек
         let hunterScript = WKUserScript(
             source: PlayerJS.hunter,
             injectionTime: .atDocumentEnd,
@@ -24,11 +23,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         )
         config.userContentController.addUserScript(hunterScript)
 
-        // 2. JS muting — глушим все video/audio.
-        //    Главное: перехватываем HTMLMediaElement.prototype.play и
-        //    принудительно ставим muted ДО старта. Плюс периодический контроль
-        //    и MutationObserver. Инжектим в .atDocumentStart, чтобы успеть
-        //    до создания элементов в cinemar.
         let muteJS = """
         (function(){
         function muteAll(){
@@ -44,11 +38,8 @@ struct RawPlayerWebView: UIViewRepresentable {
         }
         }catch(e){}
         }
-
         muteAll();
         setInterval(muteAll, 150);
-
-        // Перехват play() — mute ставится до воспроизведения
         try{
         var _play = HTMLMediaElement.prototype.play;
         HTMLMediaElement.prototype.play = function(){
@@ -56,8 +47,6 @@ struct RawPlayerWebView: UIViewRepresentable {
         return _play.apply(this, arguments);
         };
         }catch(e){}
-
-        // Перехват установки атрибута muted (чтобы сайт не мог его снять)
         try{
         var _setAttr = Element.prototype.setAttribute;
         Element.prototype.setAttribute = function(name, value){
@@ -69,27 +58,18 @@ struct RawPlayerWebView: UIViewRepresentable {
         return _setAttr.apply(this, arguments);
         };
         }catch(e){}
-
-        // MutationObserver — mute при появлении новых элементов
         try{
         var obs = new MutationObserver(muteAll);
         obs.observe(document.documentElement || document, {childList:true, subtree:true});
         }catch(e){}
         })();
         """
-        let muteScriptStart = WKUserScript(
-            source: muteJS,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+        config.userContentController.addUserScript(
+            WKUserScript(source: muteJS, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
-        config.userContentController.addUserScript(muteScriptStart)
-
-        let muteScriptEnd = WKUserScript(
-            source: muteJS,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: false
+        config.userContentController.addUserScript(
+            WKUserScript(source: muteJS, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         )
-        config.userContentController.addUserScript(muteScriptEnd)
 
         config.userContentController.add(context.coordinator, name: "videoURL")
         config.userContentController.add(context.coordinator, name: "voiceList")
@@ -154,8 +134,8 @@ struct RawPlayerWebView: UIViewRepresentable {
         func load(url: URL) {
             guard let webView = webView else { return }
             var request = URLRequest(url: url)
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Referer")
-            request.setValue("https://mix.kinogo.mu/", forHTTPHeaderField: "Origin")
+            request.setValue(AppConfig.referer, forHTTPHeaderField: "Referer")
+            request.setValue(AppConfig.origin,  forHTTPHeaderField: "Origin")
             webView.load(request)
         }
 
@@ -187,7 +167,7 @@ struct RawPlayerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
-                     forNavigationAction navigationAction: WKNavigationAction,
+                     for navigationAction: WKNavigationAction,
                      windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url {
                 if isVideoURL(url) { onVideoURLTap?(url) }
