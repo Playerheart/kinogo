@@ -48,13 +48,37 @@ struct SiteProfile: Codable, Equatable {
         playerHosts: ["cinemar","kodik","alloha","bazon","videocdn","sibnet","aniboom","hdvb","vadbam","pleer"]
     )
 
-    /// Встроенные профили для известных зеркал на DLE-теме kinogo.
+    /// Встроенный профиль для kinogo2026.com (шаблон smartphone с .article / .persons / .relatednews).
+    static let kinogo2026 = SiteProfile(
+        catalogCard: ".article",
+        catalogTitleLink: "h2.article__title a",
+        catalogPosterImg: "a.article__poster img",
+        catalogRating: ".rating__votes",
+        catalogInfoSpans: ".article__info > div",
+        catalogYearFromTitle: true,
+        catalogMaxCards: 300,
+
+        detailH1: ".fullstory__title h1, h1",
+        detailPosterImg: "a.article__poster img, .article__poster img",
+        detailInfoSpans: ".article__info > div",
+        detailFDop: ".article__info > div",
+        detailDescription: ".description__block, .article__text",
+        detailActorsContainer: ".persons__list a.js-person, .persons__list a.persons__item",
+        detailPlayersTabs: ".js-player-tabs li[data-src], .player-tabs li[data-src], li[data-src]",
+        detailPlayersContainer: ".js-player-container iframe, iframe",
+        detailRelated: ".relatednews__content a.relatednews__item",
+
+        movieURLRegex: "/\\d+-[a-z0-9\\-]+\\.html",
+        playerHosts: ["cinemar","kodik","alloha","bazon","videocdn","sibnet","aniboom","hdvb","vadbam","pleer"]
+    )
+
     static let builtIn: [String: SiteProfile] = [
         "kinogo.family":  .default,
         "kinogo.luxury":  .default,
         "kinogo.biz":     .default,
         "kinogo.mu":      .default,
         "mix.kinogo.mu":  .default,
+        "kinogo2026.com": .kinogo2026,
     ]
 
     var jsonString: String {
