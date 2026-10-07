@@ -26,8 +26,10 @@ struct PlayerScreen: View {
     @State private var showManualURLInput = false
     @State private var manualURLText = ""
 
-    @State private var showCinemarDiag = false
+    // Данные cinemar-диагностики — используются и в PlayerScreen overlay,
+    // и в CaptureSheetView overlay (когда sheet открыт).
     @State private var cinemarDiagText = ""
+    @State private var showCinemarDiag = false
 
     var body: some View {
         NavigationStack {
@@ -67,7 +69,10 @@ struct PlayerScreen: View {
                         },
                         onCinemarDiag: { text in
                             cinemarDiagText = text
-                            showCinemarDiag = true
+                            // Overlay в PlayerScreen показываем только если sheet закрыт.
+                            if !showCaptureSheet {
+                                showCinemarDiag = true
+                            }
                         },
                         pendingVoice: $pendingVoice,
                         pendingSeason: $pendingSeason,
@@ -100,7 +105,7 @@ struct PlayerScreen: View {
                         }
                     }
                     Button {
-                        runCinemarDiagnostics()
+                        runCinemarDiagnostics(showOverlay: true)
                     } label: {
                         Image(systemName: "stethoscope")
                     }
@@ -127,6 +132,11 @@ struct PlayerScreen: View {
                     episodes: episodes,
                     currentSeason: currentSeason,
                     currentEpisode: currentEpisode,
+                    cinemarDiagText: $cinemarDiagText,
+                    onRequestCinemarDiag: {
+                        // Тихо запускаем диагностику — overlay покажет сама sheet.
+                        runCinemarDiagnostics(showOverlay: false)
+                    },
                     onVoiceChange: { v in
                         currentVoice = v
                         pendingVoice = v
@@ -197,7 +207,7 @@ struct PlayerScreen: View {
         }
     }
 
-    // MARK: - Диагностика cinemar
+    // MARK: - Диагностика cinemar (используется и здесь, и в sheet)
 
     private var cinemarDiagOverlay: some View {
         ZStack {
@@ -263,9 +273,11 @@ struct PlayerScreen: View {
         }
     }
 
-    private func runCinemarDiagnostics() {
+    private func runCinemarDiagnostics(showOverlay: Bool) {
         cinemarDiagText = "Собираю данные из cinemar-iframe…"
-        showCinemarDiag = true
+        if showOverlay {
+            showCinemarDiag = true
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             guard let window = UIApplication.shared.connectedScenes
