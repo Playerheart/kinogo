@@ -22,7 +22,6 @@ final class ProfileInferencer: NSObject {
     private var currentPageLabel: String = ""
     private var enqueuedURLs: Set<String> = []
 
-    // Счётчик попаданий по cardClass: сколько страниц подтвердили кандидата и с каким count
     private var classVotes: [String: (hits: Int, avgCount: Int, best: SiteProfile)] = [:]
 
     private struct PageResult {
@@ -33,8 +32,16 @@ final class ProfileInferencer: NSObject {
     }
     private var pageResults: [PageResult] = []
 
-    private let maxPaginationPerStart = 3   // не больше 3 страниц пагинации на стартовый URL
+    private let maxPaginationPerStart = 3
     private var paginationDepthByPrefix: [String: Int] = [:]
+
+    // Результаты первого этапа (каталог)
+    private var catalogProfile: SiteProfile?
+    private var catalogMovieCount: Int = 0
+    private var firstMovieURL: URL?
+
+    // Флаг: сейчас идёт второй этап (детальная)
+    private var isDetailStage = false
 
     private override init() {
         super.init()
@@ -62,6 +69,10 @@ final class ProfileInferencer: NSObject {
             self.enqueuedURLs = []
             self.classVotes = [:]
             self.paginationDepthByPrefix = [:]
+            self.catalogProfile = nil
+            self.catalogMovieCount = 0
+            self.firstMovieURL = nil
+            self.isDetailStage = false
 
             let starts: [String] = ["filmy/", "serialy/"]
             var urls: [URL] = []
@@ -74,17 +85,22 @@ final class ProfileInferencer: NSObject {
             self.urlQueue = urls
             self.currentIdx = 0
 
+            self.log("═══ Этап 1: каталог ═══")
             self.log("Хост: \(host)")
             self.log("UA: десктопный Safari")
             self.log("Стартовые страницы: \(starts.joined(separator: ", "))")
-            self.log("Лимит пагинации на старт: \(self.maxPaginationPerStart) страницы")
 
             self.loadNextPage()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
                 guard let self = self, !self.isDone else { return }
-                self.log("⚠️ Таймаут 120с, финализирую по тому, что есть")
-                self.finishAllPages()
+                if self.catalogProfile != nil {
+                    self.log("⚠️ Таймаут, но каталог уже определён — продолжаю")
+                    self.startDetailStage()
+                } else {
+                    self.log("⚠️ Таймаут, финализирую по тому, что есть")
+                    self.finishAllPages()
+                }
             }
         }
     }
@@ -120,7 +136,7 @@ final class ProfileInferencer: NSObject {
 
     private func logString() -> String { diagLog.joined(separator: "\n") }
 
-    private func finishFailure(reason: String) {
+    private func: Int, card finishFailure(reason: String) {
         guard !isDone else { return }
         isDone = true
         log("❌ \(reason)")
@@ -129,32 +145,147 @@ final class ProfileInferencer: NSObject {
         cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
     }
 
+    // Финализация этапа 1 → переход на этап 2
     private func finishAllPages() {
+        guard !isDone else { return }
+
+        // Определяем победителя каталога
+        let catalogWinner: (profile: SiteProfile, countClass: String)? = {
+            if let (cardClass, vote) = classVotes.max(by: { $0.value.hits < $1.value.hits }),
+               vote.hits >= 2 {
+                return (vote.best, vote.avgCount, cardClass)
+            }
+            if let best = pageResults.max(by: { $0.count < $1.count }) {
+                // извлекаем имя класса из profile.catalogCard (".shortstory" → "shortstory")
+                let cardClass = best.profile.catalogCard
+                    .replacingOccurrences(of: ".", with: "")
+                    .components(separatedBy: " ").first ?? best.profile.catalogCard
+                return (best.profile, best.count, cardClass)
+            }
+            return nil
+        }()
+
+        guard let winner = catalogWinner else {
+            log("❌ Ни одна страница не дала кандидатов")
+            isDone = true
+            let cb = completion
+            completion = nil
+            cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
+            return
+        }
+
+        self.catalogProfile = winner.profile
+        self.catalogMovieCount = winner.count
+
+        log("")
+        log("═══ Каталог определён ═══")
+        log("Класс карточки: .\(winner.cardClass)")
+        log("Среднее число карточек на странице: \(winner.count)")
+        log("Профиль каталога:")
+        log("  card   = \(winner.profile.catalogCard)")
+        log("  title  = \(winner.profile.catalogTitleLink)")
+        log("  poster = \(winner.profile.catalogPosterImg)")
+        log("  rating = \(winner.profile.catalogRating)")
+
+        // Переходим на этап 2 (детальная)
+        startDetailStage()
+    }
+
+    // ЭТАП 2: открываем первую карточку каталога
+    private func startDetailStage() {
+        guard !isDone else { return }
+        isDetailStage = true
+
+        log("")
+        log("═══ Этап 2: детальная страница ═══")
+
+        guard let movieURL = firstMovieURL else {
+            log("⚠️ Не нашли URL фильма — пропускаю этап 2")
+            finalizeAll()
+            return
+        }
+        log("Открываю: \(movieURL.absoluteString)")
+
+        guard let webView = webView else {
+            log("⚠️ WebView потерян — пропускаю этап 2")
+            finalizeAll()
+            return
+        }
+        webView.stopLoading()
+        webView.load(URLRequest(url: movieURL))
+    }
+
+    private func analyzeDetail() {
+        guard !isDone, let webView = webView else { return }
+
+        webView.evaluateJavaScript(ProfileInferencer.detailCollectorJS) { [weak self] result, error in
+            guard let self = self, !self.isDone else { return }
+
+            if let err = error {
+                self.log("  ⚠️ JS-ошибка: \(err.localizedDescription)")
+                self.finalizeAll()
+                return
+            }
+
+            guard let jsonStr = result as? String,
+                  let data = jsonStr.data(using: .utf8),
+                  let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                self.log("  ⚠️ JS вернул не JSON")
+                self.finalizeAll()
+                return
+            }
+
+            // Начинаем с профиля каталога
+            var profile = self.catalogProfile ?? SiteProfile.default
+
+            if let h1 = dict["h1"] as? String, !h1.isEmpty {
+                profile.detailH1 = h1
+                self.log("  detailH1        = \(h1)")
+            }
+            if let poster = dict["poster"] as? String, !poster.isEmpty {
+                profile.detailPosterImg = poster
+                self.log("  detailPosterImg = \(poster)")
+            }
+            if let desc = dict["description"] as? String, !desc.isEmpty {
+                profile.detailDescription = desc
+                self.log("  detailDescription = \(desc)")
+            }
+            if let actors = dict["actorsContainer"] as? String, !actors.isEmpty {
+                profile.detailActorsContainer = actors
+                self.log("  detailActors      = \(actors)")
+            }
+            if let related = dict["related"] as? String, !related.isEmpty {
+                profile.detailRelated = related
+                self.log("  detailRelated     = \(related)")
+            }
+            if let info = dict["infoSpans"] as? String, !info.isEmpty {
+                profile.detailInfoSpans = info
+                self.log("  detailInfoSpans   = \(info)")
+            }
+            if let fdop = dict["fDop"] as? String, !fdop.isEmpty {
+                profile.detailFDop = fdop
+                self.log("  detailFDop        = \(fdop)")
+            }
+            if let tabs = dict["playersTabs"] as? String, !tabs.isEmpty {
+                profile.detailPlayersTabs = tabs
+                self.log("  detailPlayersTabs = \(tabs)")
+            }
+            if let cont = dict["playersContainer"] as? String, !cont.isEmpty {
+                profile.detailPlayersContainer = cont
+                self.log("  detailPlayersContainer = \(cont)")
+            }
+
+            self.catalogProfile = profile
+            self.finalizeAll()
+        }
+    }
+
+    // Финальная сборка результата
+    private func finalizeAll() {
         guard !isDone else { return }
         isDone = true
 
-        // Приоритет: консенсус по классам
-        if let (cardClass, vote) = classVotes.max(by: { $0.value.hits < $1.value.hits }) {
-            if vote.hits >= 2 {
-                log("")
-                log("═══ Итог ═══")
-                log("Победитель по консенсусу: .\(cardClass)")
-                log("Попаданий: \(vote.hits), среднее карточек: \(vote.avgCount)")
-                log("Профиль:")
-                log("  card   = \(vote.best.catalogCard)")
-                log("  title  = \(vote.best.catalogTitleLink)")
-                log("  poster = \(vote.best.catalogPosterImg)")
-                log("  rating = \(vote.best.catalogRating)")
-                let cb = completion
-                completion = nil
-                cb?(InferenceResult(host: host, profile: vote.best, movieCount: vote.avgCount, log: logString()))
-                return
-            }
-        }
-
-        // Fallback: лучший по одной странице
-        guard let best = pageResults.max(by: { $0.count < $1.count }) else {
-            log("❌ Ни одна страница не дала кандидатов")
+        guard let profile = catalogProfile else {
             let cb = completion
             completion = nil
             cb?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
@@ -163,19 +294,27 @@ final class ProfileInferencer: NSObject {
 
         log("")
         log("═══ Итог ═══")
-        log("Лучшая страница: \(best.label) (\(best.count) карточек)")
-        log("Профиль:")
-        log("  card   = \(best.profile.catalogCard)")
-        log("  title  = \(best.profile.catalogTitleLink)")
-        log("  poster = \(best.profile.catalogPosterImg)")
-        log("  rating = \(best.profile.catalogRating)")
+        log("Полный профиль:")
+        log("  card   = \(profile.catalogCard)")
+        log("  title  = \(profile.catalogTitleLink)")
+        log("  poster = \(profile.catalogPosterImg)")
+        log("  rating = \(profile.catalogRating)")
+        log("  h1     = \(profile.detailH1)")
+        log("  dPoster= \(profile.detailPosterImg)")
+        log("  descr  = \(profile.detailDescription)")
+        log("  actors = \(profile.detailActorsContainer)")
+        log("  related= \(profile.detailRelated)")
+        log("  info   = \(profile.detailInfoSpans)")
+        log("  fDop   = \(profile.detailFDop)")
+        log("  tabs   = \(profile.detailPlayersTabs)")
+        log("  cont   = \(profile.detailPlayersContainer)")
 
         let cb = completion
         completion = nil
-        cb?(InferenceResult(host: host, profile: best.profile, movieCount: best.count, log: logString()))
+        cb?(InferenceResult(host: host, profile: profile, movieCount: catalogMovieCount, log: logString()))
     }
 
-    // MARK: - Анализ текущей страницы
+    // MARK: - Анализ каталога
 
     private func analyze() {
         guard !isDone, let webView = webView else { return }
@@ -202,21 +341,27 @@ final class ProfileInferencer: NSObject {
             let movieLinksCount = (dict["movieLinksCount"] as? Int) ?? 0
             let pageTitle = (dict["title"] as? String) ?? "?"
             let paginationLinks = (dict["paginationLinks"] as? [String]) ?? []
+            let firstMovie = (dict["firstMovieURL"] as? String) ?? ""
             let currentURL = webView.url ?? URL(string: "https://\(self.host)/")!
+
+            // Сохраняем URL первой карточки для этапа 2
+            if self.firstMovieURL == nil, !firstMovie.isEmpty {
+                if let u = URL(string: firstMovie, relativeTo: currentURL)?.absoluteURL {
+                    self.firstMovieURL = u
+                    self.log("  Первая карточка (для этапа 2): \(u.path)")
+                }
+            }
 
             self.log("  Заголовок: \(pageTitle)")
             self.log("  Ссылок /NNN-slug.html: \(movieLinksCount)")
 
-            // ---- Ограниченная пагинация: не больше N страниц на один стартовый префикс ----
-            // Определяем префикс (filmy/ или serialy/)
             let prefix: String
             if currentURL.path.hasPrefix("/filmy/") { prefix = "filmy/" }
             else if currentURL.path.hasPrefix("/serialy/") { prefix = "serialy/" }
             else { prefix = "other/" }
 
-            let depth = paginationDepthByPrefix[prefix] ?? 0
+            let depth = self.paginationDepthByPrefix[prefix] ?? 0
             if !paginationLinks.isEmpty && depth < self.maxPaginationPerStart {
-                // Берём ТОЛЬКО первый не-текущий номер пагинации (обычно «следующая»)
                 let nextPages = paginationLinks.prefix(self.maxPaginationPerStart)
                 self.log("  Ссылок пагинации: \(paginationLinks.count) — беру первые \(nextPages.count)")
                 for href in nextPages {
@@ -255,7 +400,6 @@ final class ProfileInferencer: NSObject {
                         count: b.count
                     ))
 
-                    // ---- Консенсус: обновляем счётчик по классу ----
                     let key = b.cardClass
                     if let existing = self.classVotes[key] {
                         let newHits = existing.hits + 1
@@ -265,9 +409,8 @@ final class ProfileInferencer: NSObject {
                         self.classVotes[key] = (hits: 1, avgCount: b.count, best: b.profile)
                     }
 
-                    // ---- Ранний выход по консенсусу: если этот класс уже попал 3 раза с ≥5 ----
                     if let v = self.classVotes[key], v.hits >= 3 && v.avgCount >= 5 {
-                        self.log("  ⭐ Класс .\(key) подтверждён \(v.hits) раза, avg=\(v.avgCount). Финализация.")
+                        self.log("  ⭐ Класс .\(key) подтверждён \(v.hits) раза, avg=\(v.avgCount). Финализация каталога.")
                         self.finishAllPages()
                         return
                     }
@@ -313,8 +456,6 @@ final class ProfileInferencer: NSObject {
         var p = SiteProfile.default
 
         if let card = cand["cardClass"] as? String, !card.isEmpty {
-            // ВАЖНО: класс НЕ нормализуем по регистру — сайт может использовать .shortstory,
-            // а не .shortStory. Берём как есть.
             p.catalogCard = ".\(card)"
         }
         if let title = cand["titleSelector"] as? String, isRealSelector(title) {
@@ -334,7 +475,7 @@ final class ProfileInferencer: NSObject {
         return s.contains(".") || s.contains(" ") || s.contains(">") || s.contains("[")
     }
 
-    // MARK: - JS: сбор кандидатов + пагинация
+    // MARK: - JS: каталог
 
     private static let collectorJS = """
     (function(){
@@ -343,7 +484,8 @@ final class ProfileInferencer: NSObject {
       title: document.title,
       movieLinksCount: 0,
       candidates: [],
-      paginationLinks: []
+      paginationLinks: [],
+      firstMovieURL: ''
     };
 
     var allLinks = document.querySelectorAll('a[href]');
@@ -356,8 +498,10 @@ final class ProfileInferencer: NSObject {
       }
     }
     out.movieLinksCount = movieLinks.length;
+    if (movieLinks.length > 0) {
+      out.firstMovieURL = movieLinks[0].getAttribute('href') || '';
+    }
 
-    // ---- Пагинация ----
     var pagSet = {};
     function addPag(href) {
       if (!href) return;
@@ -365,7 +509,6 @@ final class ProfileInferencer: NSObject {
       if (href === '#' || href.indexOf('#') === 0) return;
       pagSet[href] = true;
     }
-
     try {
       var containers = document.querySelectorAll(
         '.navigation, .pagination, .pagenav, .pages, .navig, ' +
@@ -379,17 +522,14 @@ final class ProfileInferencer: NSObject {
         }
       }
     } catch(e) {}
-
     try {
       for (var i = 0; i < allLinks.length; i++) {
         var h = allLinks[i].getAttribute('href') || '';
-        // /page/N/ или ?page=N
         if (/\\/page\\/\\d+\\/?/.test(h) || h.indexOf('?page=') !== -1 || h.indexOf('&page=') !== -1) {
           addPag(h);
         }
       }
     } catch(e) {}
-
     try {
       for (var i = 0; i < allLinks.length; i++) {
         var t = (allLinks[i].textContent || '').trim();
@@ -405,7 +545,6 @@ final class ProfileInferencer: NSObject {
 
     if (movieLinks.length < 3) return JSON.stringify(out);
 
-    // ---- Кандидаты-карточки ----
     var classVotes = {};
     for (var i = 0; i < Math.min(movieLinks.length, 60); i++) {
       var link = movieLinks[i];
@@ -506,6 +645,195 @@ final class ProfileInferencer: NSObject {
     return JSON.stringify(out);
     })();
     """
+
+    // MARK: - JS: детальная страница
+
+    private static let detailCollectorJS = """
+    (function(){
+    var out = {
+      url: location.href,
+      title: document.title,
+      h1: '',
+      poster: '',
+      description: '',
+      related: '',
+      actorsContainer: '',
+      infoSpans: '',
+      fDop: '',
+      playersTabs: '',
+      playersContainer: ''
+    };
+
+    function classesOf(el) {
+      var cls = String(el.className || '').trim();
+      if (!cls) return [];
+      return cls.split(/\\s+/).filter(function(p){return p.length >= 3});
+    }
+
+    function buildSelector(el) {
+      if (!el) return '';
+      var tag = el.tagName.toLowerCase();
+      var parts = classesOf(el);
+      if (parts.length > 0) {
+        parts.sort(function(a,b){return b.length - a.length});
+        return tag + '.' + parts[0];
+      }
+      var node = el.parentElement;
+      var depth = 0;
+      while (node && node !== document.body && depth < 4) {
+        var pcls = classesOf(node);
+        if (pcls.length > 0) {
+          pcls.sort(function(a,b){return b.length - a.length});
+          return node.tagName.toLowerCase() + '.' + pcls[0] + ' ' + tag;
+        }
+        node = node.parentElement;
+        depth++;
+      }
+      return tag;
+    }
+
+    // H1
+    var h1 = document.querySelector('h1');
+    if (h1) out.h1 = buildSelector(h1);
+
+    // Poster: ищем img с наибольшей площадью, не в шапке/сайдбаре
+    var bestImg = null, bestArea = 0;
+    var imgs = document.querySelectorAll('img');
+    for (var i = 0; i < imgs.length; i++) {
+      var im = imgs[i];
+      var w = im.naturalWidth || im.clientWidth || 0;
+      var h = im.naturalHeight || im.clientHeight || 0;
+      var src = im.getAttribute('src') || im.getAttribute('data-src') || '';
+      if (!src || src.indexOf('dot.gif') !== -1 || src.indexOf('data:') === 0) continue;
+      // игнорируем явно мелкие
+      if (w < 100 && h < 100) continue;
+      var area = w * h;
+      if (area > bestArea) { bestArea = area; bestImg = im; }
+    }
+    if (bestImg) out.poster = buildSelector(bestImg);
+
+    // Описание: самый длинный текстовый блок >250 символов, но не внутри nav/footer/sidebar/script/style
+    function isInsideNoise(el) {
+      var node = el;
+      var depth = 0;
+      while (node && node !== document.body && depth < 8) {
+        var tag = node.tagName ? node.tagName.toLowerCase() : '';
+        if (tag === 'nav' || tag === 'footer' || tag === 'aside' || tag === 'script' || tag === 'style') return true;
+        var cls = String(node.className || '').toLowerCase();
+        if (cls.indexOf('sidebar') !== -1 || cls.indexOf('footer') !== -1 ||
+            cls.indexOf('menu') !== -1 || cls.indexOf('nav') !== -1) return true;
+        node = node.parentElement;
+        depth++;
+      }
+      return false;
+    }
+    var bestDesc = null, bestLen = 0;
+    var cands = document.querySelectorAll('div, p, article, section');
+    for (var i = 0; i < cands.length; i++) {
+      var el = cands[i];
+      // пропускаем контейнеры, у которых есть вложенные div с текстом
+      var directText = '';
+      for (var c = 0; c < el.childNodes.length; c++) {
+        var ch = el.childNodes[c];
+        if (ch.nodeType === 3) directText += (ch.textContent || '');
+      }
+      var fullText = (el.textContent || '').trim();
+      if (fullText.length < 200) continue;
+      if (fullText.length > 5000) continue;
+      if (isInsideNoise(el)) continue;
+      // эвристика: если у нас есть .description/.filmDescription — используем как приоритет
+      var cls = String(el.className || '').toLowerCase();
+      var score = fullText.length;
+      if (cls.indexOf('descr') !== -1 || cls.indexOf('filmdescr') !== -1) score += 5000;
+      if (score > bestLen) { bestLen = score; bestDesc = el; }
+    }
+    if (bestDesc) out.description = buildSelector(bestDesc);
+
+    // Актеры: контейнер, содержащий <b>Актеры</b>
+    var allB = document.querySelectorAll('b, strong');
+    for (var i = 0; i < allB.length; i++) {
+      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
+      if (t === 'актеры' || t === 'в ролях') {
+        var container = allB[i].parentElement;
+        if (container) out.actorsContainer = buildSelector(container);
+        break;
+      }
+    }
+
+    // infoSpans: родитель у <b>Год выпуска> / <b>Страна>
+    var infoLabels = ['год выпуска', 'страна', 'жанр'];
+    for (var i = 0; i < allB.length; i++) {
+      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
+      if (infoLabels.indexOf(t) !== -1) {
+        var container = allB[i].closest('span, div, li, p');
+        if (container) {
+          // поднимаемся до общего родителя этих полей
+          var parent = container.parentElement;
+          if (parent) out.infoSpans = buildSelector(parent) + ' > ' + buildSelector(container);
+          else out.infoSpans = buildSelector(container);
+          break;
+        }
+      }
+    }
+
+    // fDop: блок с <b>Качество:>
+    for (var i = 0; i < allB.length; i++) {
+      var t = (allB[i].textContent || '').replace(/\\s*:\\s*$/, '').toLowerCase();
+      if (t === 'качество' || t === 'длительность' || t === 'перевод') {
+        var container = allB[i].parentElement;
+        if (container) {
+          var parent2 = container.parentElement;
+          if (parent2) out.fDop = buildSelector(parent2) + ' > ' + buildSelector(container);
+          else out.fDop = buildSelector(container);
+          break;
+        }
+      }
+    }
+
+    // Игроки: li с data-src или iframe с известными хостами
+    var tabs = document.querySelectorAll('li[data-src], [data-src]');
+    if (tabs.length > 0) {
+      var firstTabs = tabs[0];
+      out.playersTabs = buildSelector(firstTabs);
+    }
+    var ifr = document.querySelectorAll('iframe');
+    for (var i = 0; i < ifr.length; i++) {
+      var src = (ifr[i].getAttribute('src') || '').toLowerCase();
+      if (src.indexOf('cinemar') !== -1 || src.indexOf('kodik') !== -1 ||
+          src.indexOf('alloha') !== -1 || src.indexOf('videocdn') !== -1) {
+        out.playersContainer = buildSelector(ifr[i]);
+        break;
+      }
+    }
+
+    // Рекомендации: контейнер с максимальным числом <a href="...N-slug.html">
+    var relMap = {};
+    var allLinks = document.querySelectorAll('a[href]');
+    for (var i = 0; i < allLinks.length; i++) {
+      var h = allLinks[i].getAttribute('href') || '';
+      if (!/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) continue;
+      var node = allLinks[i].parentElement;
+      var depth = 0;
+      while (node && node !== document.body && depth < 5) {
+        var key = node;
+        if (!relMap[key]) relMap[key] = 0;
+        relMap[key]++;
+        node = node.parentElement;
+        depth++;
+      }
+    }
+    var bestRel = null, bestRelCount = 0;
+    for (var k in relMap) {
+      if (relMap[k] > bestRelCount && relMap[k] >= 3) {
+        bestRelCount = relMap[k];
+        bestRel = k;
+      }
+    }
+    if (bestRel) out.related = buildSelector(bestRel) + ' a';
+
+    return JSON.stringify(out);
+    })();
+    """
 }
 
 extension ProfileInferencer: WKNavigationDelegate {
@@ -516,19 +844,32 @@ extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard !isDone else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
-            self?.analyze()
+            guard let self = self, !self.isDone else { return }
+            if self.isDetailStage {
+                self.analyzeDetail()
+            } else {
+                self.analyze()
+            }
         }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         log("  ⚠️ Ошибка загрузки: \(error.localizedDescription)")
-        currentIdx += 1
-        loadNextPage()
+        if isDetailStage {
+            finalizeAll()
+        } else {
+            currentIdx += 1
+            loadNextPage()
+        }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         log("  ⚠️ Ошибка provisional: \(error.localizedDescription)")
-        currentIdx += 1
-        loadNextPage()
+        if isDetailStage {
+            finalizeAll()
+        } else {
+            currentIdx += 1
+            loadNextPage()
+        }
     }
 }
