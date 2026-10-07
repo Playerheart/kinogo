@@ -177,10 +177,9 @@ final class ProfileInferencer: NSObject {
                 self.loadNextPage()
                 return
             }
-            self.log("  Кандидатов: \(candidates.count)++)")
+            self.log("  Кандидатов: \(candidates.count)")
 
-            let pageURL = webView.url ?? URL {
-(string: "https://\(self.h        var t =ost)/")!
+            let pageURL = webView.url ?? URL(string: "https://\(self.host)/")!
             self.validateCandidates(candidates, pageURL: pageURL)
         }
     }
@@ -370,7 +369,8 @@ final class ProfileInferencer: NSObject {
 
       var ratingEl = null;
       var all = el.querySelectorAll('*');
-      for (var r = 0; r < all.length && r < 300; r (all[r].textContent || '').trim();
+      for (var r = 0; r < all.length && r < 300; r++) {
+        var t = (all[r].textContent || '').trim();
         if (/^\\d\\.\\d$/.test(t)) { ratingEl = all[r]; break; }
       }
       card.ratingSelector = ratingEl ? buildSelector(ratingEl) : '';
