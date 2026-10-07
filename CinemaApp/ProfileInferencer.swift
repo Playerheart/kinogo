@@ -18,6 +18,20 @@ final class ProfileInferencer: NSObject {
     private var isDone = false
     private var diagLog: [String] = []
 
+    // Очередь страниц для инференса: сначала каталоги, потом главная как fallback.
+    private var urlQueue: [URL] = []
+    private var currentIdx = 0
+    private var currentPageLabel: String = ""
+
+    private struct PageResult {
+        let label: String
+        let url: URL
+        let profile: SiteProfile
+        let count: Int
+        let candidates: [[String: Any]]
+    }
+    private var pageResults: [PageResult] = []
+
     private override init() {
         super.init()
         let config = WKWebViewConfiguration()
@@ -33,19 +47,48 @@ final class ProfileInferencer: NSObject {
         self.completion = completion
         self.isDone = false
         self.diagLog = []
+        self.pageResults = []
 
-        guard let url = URL(string: "https://\(host)/") else {
-            finishFailure(reason: "Неверный хост: \(host)")
+        let candidates: [(String, String)] = [
+            ("filmy/", "Фильмы"),
+            ("movies/", "Фильмы (alt)"),
+            ("films/", "Фильмы (alt2)"),
+            ("serialy/", "Сериалы"),
+            ("novinki/", "Новинки"),
+            ("", "Главная")
+        ]
+
+        var urls: [URL] = []
+        for (path, _) in candidates {
+            if let u = URL(string: "https://\(host)/\(path)") {
+                urls.append(u)
+            }
+        }
+        self.urlQueue = urls
+        self.currentIdx = 0
+
+        log("Хост: \(host)")
+        log("Буду проверять страницы: \(candidates.map { $0.0.isEmpty ? "(главная)" : $0.0 }.joined(separator: ", "))")
+
+        loadNextPage()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90) { [weak self] in
+            guard let self = self, !self.isDone else { return }
+            self.finishFailure(reason: "Таймаут 90 секунд")
+        }
+    }
+
+    private func loadNextPage() {
+        guard !isDone else { return }
+        guard currentIdx < urlQueue.count else {
+            finalize()
             return
         }
-        log("Начинаю загрузку \(url.absoluteString)")
+        let url = urlQueue[currentIdx]
+        currentPageLabel = url.path.isEmpty ? "главная" : url.path
+        log("── Страница \(currentIdx + 1)/\(urlQueue.count): \(url.absoluteString)")
         webView.stopLoading()
         webView.load(URLRequest(url: url))
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 50) { [weak self] in
-            guard let self = self, !self.isDone else { return }
-            self.finishFailure(reason: "Таймаут 50 секунд")
-        }
     }
 
     private func log(_ msg: String) {
@@ -62,73 +105,99 @@ final class ProfileInferencer: NSObject {
         completion = nil
     }
 
-    private func finishSuccess(profile: SiteProfile, movieCount: Int, detail: String) {
+    private func finalize() {
         guard !isDone else { return }
         isDone = true
-        log(detail)
-        log("Профиль: card=\(profile.catalogCard)  title=\(profile.catalogTitleLink)  poster=\(profile.catalogPosterImg)")
-        completion?(InferenceResult(host: host, profile: profile, movieCount: movieCount, log: logString()))
+
+        guard let best = pageResults.max(by: { $0.count < $1.count }) else {
+            log("❌ Ни одна страница не дала кандидатов")
+            completion?(InferenceResult(host: host, profile: SiteProfile.default, movieCount: 0, log: logString()))
+            completion = nil
+            return
+        }
+
+        log("")
+        log("═══ Итог ═══")
+        log("Лучшая страница: \(best.label) (\(best.count) карточек)")
+        log("Профиль:")
+        log("  card   = \(best.profile.catalogCard)")
+        log("  title  = \(best.profile.catalogTitleLink)")
+        log("  poster = \(best.profile.catalogPosterImg)")
+        log("  rating = \(best.profile.catalogRating)")
+
+        completion?(InferenceResult(host: host, profile: best.profile, movieCount: best.count, log: logString()))
         completion = nil
     }
 
-    // MARK: - Анализ
+    // MARK: - Анализ текущей страницы
 
     private func analyze() {
         guard !isDone else { return }
-        log("Анализирую DOM…")
+        log("  Анализирую DOM…")
 
         webView.evaluateJavaScript(ProfileInferencer.collectorJS) { [weak self] result, error in
             guard let self = self, !self.isDone else { return }
 
             if let err = error {
-                self.finishFailure(reason: "JS-ошибка: \(err.localizedDescription)")
+                self.log("  ⚠️ JS-ошибка: \(err.localizedDescription)")
+                self.currentIdx += 1
+                self.loadNextPage()
                 return
             }
 
-            guard let jsonStr = result as? String else {
-                self.finishFailure(reason: "JS вернул не строку: \(String(describing: result))")
-                return
-            }
-
-            guard let data = jsonStr.data(using: .utf8),
+            guard let jsonStr = result as? String,
+                  let data = jsonStr.data(using: .utf8),
                   let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                self.finishFailure(reason: "JSON не парсится. Первые 200 символов: \(String(jsonStr.prefix(200)))")
+                self.log("  ⚠️ JS вернул не JSON")
+                self.currentIdx += 1
+                self.loadNextPage()
                 return
             }
 
             let movieLinksCount = (dict["movieLinksCount"] as? Int) ?? 0
-            let title = (dict["title"] as? String) ?? "?"
-            let pageURL = (dict["url"] as? String) ?? "?"
-            self.log("Финальный URL: \(pageURL)")
-            self.log("Заголовок страницы: \(title)")
-            self.log("Ссылок /NNN-slug.html: \(movieLinksCount)")
+            let pageTitle = (dict["title"] as? String) ?? "?"
+            self.log("  Заголовок: \(pageTitle)")
+            self.log("  Ссылок /NNN-slug.html: \(movieLinksCount)")
 
             guard let candidates = dict["candidates"] as? [[String: Any]], !candidates.isEmpty else {
-                self.finishFailure(reason: "Не найдено кандидатов-карточек (ссылок на фильмы: \(movieLinksCount))")
+                self.log("  Кандидатов нет — пропускаю страницу")
+                self.currentIdx += 1
+                self.loadNextPage()
                 return
             }
-            self.log("Кандидатов: \(candidates.count)")
+            self.log("  Кандидатов: \(candidates.count)")
 
-            self.validateCandidates(candidates)
+            self.validateCandidates(candidates, pageURL: self.webView.url ?? URL(string: "https://\(self.host)/")!)
         }
     }
 
-    private func validateCandidates(_ candidates: [[String: Any]]) {
+    private func validateCandidates(_ candidates: [[String: Any]], pageURL: URL) {
         var idx = 0
-        var best: (profile: SiteProfile, count: Int, cardClass: String)?
+        var bestOnPage: (profile: SiteProfile, count: Int, cardClass: String)?
 
         func step() {
             if isDone { return }
             guard idx < candidates.count else {
-                if let b = best, b.count > 0 {
-                    self.finishSuccess(
+                if let b = bestOnPage, b.count > 0 {
+                    self.log("  ✅ Лучший на этой странице: .\(b.cardClass) → \(b.count)")
+                    self.pageResults.append(PageResult(
+                        label: self.currentPageLabel,
+                        url: pageURL,
                         profile: b.profile,
-                        movieCount: b.count,
-                        detail: "✅ Лучший кандидат: .\(b.cardClass) → \(b.count) фильмов"
-                    )
+                        count: b.count,
+                        candidates: candidates
+                    ))
+                    // Ранний выход: если нашли ≥50 карточек на первом каталоге — дальше смысла нет
+                    if b.count >= 50 && self.currentIdx == 0 {
+                        self.log("  Ранний выход (достаточно карточек)")
+                        self.finalize()
+                        return
+                    }
                 } else {
-                    self.finishFailure(reason: "Ни один кандидат не дал валидных фильмов")
+                    self.log("  ⚠️ Все кандидаты дали 0 фильмов")
                 }
+                self.currentIdx += 1
+                self.loadNextPage()
                 return
             }
 
@@ -151,9 +220,9 @@ final class ProfileInferencer: NSObject {
                         return !t.isEmpty && !u.isEmpty
                     }.count
                 }
-                self.log("  • .\(cardClass)  t=\"\(titleSel)\"  p=\"\(posterSel)\"  → \(count)")
-                if best == nil || count > best!.count {
-                    best = (profile, count, cardClass)
+                self.log("    • .\(cardClass)  t=\"\(titleSel)\"  p=\"\(posterSel)\" → \(count)")
+                if bestOnPage == nil || count > bestOnPage!.count {
+                    bestOnPage = (profile, count, cardClass)
                 }
                 step()
             }
@@ -167,9 +236,6 @@ final class ProfileInferencer: NSObject {
         if let card = cand["cardClass"] as? String, !card.isEmpty {
             p.catalogCard = ".\(card)"
         }
-        // Заменяем title/poster/rating ТОЛЬКО если селектор реально содержит
-        // класс/потомка/атрибут. Иначе инференсер возвращает tag-only ("a", "img")
-        // и затирает хороший дефолт.
         if let title = cand["titleSelector"] as? String, isRealSelector(title) {
             p.catalogTitleLink = title
         }
@@ -205,7 +271,7 @@ final class ProfileInferencer: NSObject {
     if (movieLinks.length < 3) return JSON.stringify(out);
 
     var classVotes = {};
-    for (var i = 0; i < Math.min(movieLinks.length, 30); i++) {
+    for (var i = 0; i < Math.min(movieLinks.length, 60); i++) {
       var link = movieLinks[i];
       var node = link;
       var depth = 0;
@@ -235,7 +301,7 @@ final class ProfileInferencer: NSObject {
       arr.push({ cardClass: k, count: v.count, el: v.sample });
     }
     arr.sort(function(a,b){return b.count - a.count});
-    arr = arr.slice(0, 6);
+    arr = arr.slice(0, 8);
 
     function classesOf(el) {
       var cls = String(el.className || '').trim();
@@ -251,7 +317,6 @@ final class ProfileInferencer: NSObject {
         parts.sort(function(a,b){return b.length - a.length});
         return tag + '.' + parts[0];
       }
-      // Нет класса — поднимаемся до ближайшего родителя с классом
       var node = el.parentElement;
       var depth = 0;
       while (node && node !== document.body && depth < 4) {
@@ -270,7 +335,6 @@ final class ProfileInferencer: NSObject {
       var el = arr[i].el;
       var card = { cardClass: arr[i].cardClass, count: arr[i].count };
 
-      // title: предпочитаем <a> внутри h1-h4, иначе первый <a> с осмысленным текстом
       var titleEl = null;
       var hEls = el.querySelectorAll('h1, h2, h3, h4');
       for (var h = 0; h < hEls.length; h++) {
@@ -310,19 +374,22 @@ final class ProfileInferencer: NSObject {
 
 extension ProfileInferencer: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        log("→ Начало навигации")
+        // не логируем, чтобы не засорять
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        log("→ Загрузка завершена: \(webView.url?.absoluteString ?? "?")")
         guard !isDone else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { [weak self] in
             self?.analyze()
         }
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        finishFailure(reason: "Ошибка навигации: \(error.localizedDescription)")
+        log("  ⚠️ Ошибка загрузки: \(error.localizedDescription)")
+        currentIdx += 1
+        loadNextPage()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        finishFailure(reason: "Ошибка provisional: \(error.localizedDescription)")
+        log("  ⚠️ Ошибка provisional: \(error.localizedDescription)")
+        currentIdx += 1
+        loadNextPage()
     }
 }
