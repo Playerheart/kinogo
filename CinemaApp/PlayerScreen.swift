@@ -102,6 +102,9 @@ struct PlayerScreen: View {
                         showCaptureSheet = false
                     },
                     onOpenInSafari: { url in
+                        // ФИКС (п.3): копируем ссылку в буфер перед открытием Safari,
+                        // чтобы пользователь мог вставить её вручную, если что-то пойдёт не так.
+                        UIPasteboard.general.string = url.absoluteString
                         showCaptureSheet = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                             dismiss()
