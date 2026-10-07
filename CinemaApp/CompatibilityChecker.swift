@@ -109,10 +109,10 @@ enum CompatibilityChecker {
                                 status: foundMovie ? .ok : .fail,
                                 detail: foundMovie ? "Найден" : "Не найден"))
 
-            let hasShortstory = html.contains("shortstory")
-            checks.append(.init(name: "Разметка .shortstory",
-                                status: hasShortstory ? .ok : .warn,
-                                detail: hasShortstory ? "Есть" : "Нет"))
+            let hasShortStory = html.contains("class=\"shortStory") || html.contains("shortStory ")
+            checks.append(.init(name: "Разметка .shortStory",
+                                status: hasShortStory ? .ok : .warn,
+                                detail: hasShortStory ? "Есть" : "Нет"))
 
             var firstMoviePath: String? = nil
             if let regex = moviePattern,
@@ -134,7 +134,6 @@ enum CompatibilityChecker {
 
             URLSession.shared.dataTask(with: detailReq) { ddata, dresponse, _ in
 
-                // ФИКС (п.6): 9-я проверка — HTTP-статус detail-страницы.
                 let dhttp = dresponse as? HTTPURLResponse
                 let detailStatus = dhttp?.statusCode ?? -1
                 let detailOK = (200...299).contains(detailStatus)
@@ -149,13 +148,18 @@ enum CompatibilityChecker {
                                     status: hasJSONLD ? .ok : .warn,
                                     detail: hasJSONLD ? "Найден" : "Нет (сработает HTML-fallback)"))
 
-                let hasPersons = dhtml.contains("persons__section")
-                checks.append(.init(name: "Актёры (.persons__section)",
-                                    status: hasPersons ? .ok : .fail,
-                                    detail: hasPersons ? "Есть" : "Нет"))
+                let hasCast = dhtml.contains("class=\"cast") || dhtml.contains("cast pad")
+                checks.append(.init(name: "Актёры (.cast)",
+                                    status: hasCast ? .ok : .fail,
+                                    detail: hasCast ? "Есть" : "Нет"))
 
-                let hasRelated = dhtml.contains("relatednews__item")
-                checks.append(.init(name: "Рекомендации (.relatednews__item)",
+                let hasDescription = dhtml.contains("filmDescription")
+                checks.append(.init(name: "Описание (.filmDescription)",
+                                    status: hasDescription ? .ok : .warn,
+                                    detail: hasDescription ? "Есть" : "Нет"))
+
+                let hasRelated = dhtml.contains("viewMore-wrap") || dhtml.contains("relatedItem")
+                checks.append(.init(name: "Рекомендации (.viewMore)",
                                     status: hasRelated ? .ok : .warn,
                                     detail: hasRelated ? "Есть" : "Нет"))
 
