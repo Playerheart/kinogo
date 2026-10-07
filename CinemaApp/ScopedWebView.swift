@@ -35,12 +35,16 @@ struct ScopedWebView: UIViewRepresentable {
         var s=document.createElement('style');
         s.id=HIDE_ID;
         s.innerHTML=
-        'a.moved-tg,.moved,.moved2,.app-download,.app-download.full-b,.yellow-banner,.luxury-banner,.usermark__panel,.video-block-strip,'+
-        '.xsort,.xsort--main,.js-xf-groups,.js-xf-selected,.xfilter__groups,.xsort__selected,'+
-        'iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],'+
-        '[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],'+
+        '.app-download,.app-download.full-b,.video-block-strip,'+
+        '.shareUs,.sectionComments,.seoTip,.mylist,.dwnl,'+
+        '#header,#sideBar,.footerWrap,'+
+        '.xSortBox,.xSort,'+
+        '#eruda,.__chobitsu-hide__,'+
+        'a.moved-tg,.moved,.moved2,.yellow-banner,.luxury-banner,.usermark__panel,'+
         '.rocketme_brand_block,.rocketme_brand_block_brand,.rocketme_brand_site_container,.rocketme_brand_image,'+
         'a[href*=\\\"kinogo.luxury\\\"],a[href*=\\\"luxury\\\"],'+
+        'iframe[id^=\\\"adangle-\\\"],iframe[id^=\\\"br5g\\\"],iframe[id^=\\\"eas-\\\"],iframe[src*=\\\"agl010\\\"],iframe[src*=\\\"cvt-s1\\\"],iframe[src*=\\\"agl007\\\"],iframe[src*=\\\"agl008\\\"],iframe[src*=\\\"krasnomaga\\\"],'+
+        '[id^=\\\"adangle-\\\"],[id^=\\\"br5g\\\"],[id^=\\\"eas-\\\"],.ad-branding,ins.ad-branding,ins[data-key],'+
         'img[src*=\\\"pinco\\\"],img[src*=\\\"kysh\\\"],img[src*=\\\"promocode\\\"],img[src*=\\\"agl010\\\"],img[src*=\\\"agl007\\\"],img[src*=\\\"agl008\\\"],img[src*=\\\"b5c1d2e8\\\"],'+
         '[data-key=\\\"4ed59b8f-48b5-417a-9e88-3fb2deccafd1\\\"],[data-adblock-hidden=\\\"1\\\"]{display:none !important;}';
         document.head.appendChild(s);
@@ -48,7 +52,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         function wrapTopnews(){
         if(document.getElementById(TOPNEWS_WRAP_ID))return;
-        var block=document.querySelector('.topnews');
+        var block=document.querySelector('.sliderWrap')||document.querySelector('.slider .sliderWrap')||document.querySelector('.topnews');
         if(!block)return;
         var parent=block.parentNode;
         if(!parent)return;
@@ -68,7 +72,7 @@ struct ScopedWebView: UIViewRepresentable {
 
         function wrapXfilter(){
         if(document.getElementById(XFILTER_WRAP_ID))return;
-        var block=document.querySelector('.xfilter');
+        var block=document.querySelector('.catBlock')||document.querySelector('.xfilter');
         if(!block)return;
         var parent=block.parentNode;
         if(!parent)return;
@@ -84,17 +88,6 @@ struct ScopedWebView: UIViewRepresentable {
         block.style.setProperty('border-radius','10px','important');
         block.style.setProperty('overflow','hidden','important');
         block.style.setProperty('margin','0','important');
-        }
-
-        function fixStandalone(){
-        var list=document.querySelectorAll('.topnews__content, [class*=\\\"topnews__\\\"]');
-        for(var i=0;i<list.length;i++){
-        var el=list[i];
-        if(el.closest('#'+TOPNEWS_WRAP_ID))continue;
-        el.style.setProperty('padding-left','6px','important');
-        el.style.setProperty('padding-right','6px','important');
-        el.style.setProperty('box-sizing','border-box','important');
-        }
         }
 
         function hideByImage(){
@@ -114,7 +107,6 @@ struct ScopedWebView: UIViewRepresentable {
         try{ensureStyle();}catch(e){}
         try{wrapTopnews();}catch(e){}
         try{wrapXfilter();}catch(e){}
-        try{fixStandalone();}catch(e){}
         try{hideByImage();}catch(e){}
         }
 
@@ -143,8 +135,6 @@ struct ScopedWebView: UIViewRepresentable {
         context.coordinator.webView = webView
         context.coordinator.onMovieTap = onMovieTap
         context.coordinator.initialURL = url
-        // ФИКС (п.2): помечаем URL как загруженный, чтобы первый updateUIView
-        // не дёрнул повторную загрузку, пока uiView.url ещё nil.
         context.coordinator.lastLoadedURL = url
         webView.load(URLRequest(url: url))
         return webView
@@ -174,11 +164,8 @@ struct ScopedWebView: UIViewRepresentable {
 
         private func isMovieURL(_ url: URL) -> Bool {
             let s = url.absoluteString
-            if s.contains("/filmy/") || s.contains("/v1new/") || s.contains("/serialy/") ||
-               s.contains("/top-filmy/") || s.contains("/xfsearch/") ||
-               s.contains("/actors/") || s.contains("/directors/") ||
-               s.contains("/biografia/") ||
-               s.contains("do=search") { return false }
+            if s.range(of: #"/page/\d+/"#, options: .regularExpression) != nil { return false }
+            if s.contains("do=search") { return false }
             let pattern = #"/\d+-[a-z0-9\-]+\.html"#
             return s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
         }
