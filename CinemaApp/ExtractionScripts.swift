@@ -68,7 +68,7 @@ enum ExtractionScripts {
                         var b = spans[si].querySelector('b');
                         if (!b) continue;
                         var bt = (b.textContent || '').toLowerCase();
-                        if (bt.indexOf('год') !== -1) {
+                        if (bt.indexOf('год') !== -1 || bt.indexOf('вышел') !== -1) {
                             var txt = (spans[si].textContent || '').replace(b.textContent, '').trim();
                             var ym2 = txt.match(/\\b(19|20)\\d{2}\\b/);
                             if (ym2) { year = ym2[0]; break; }
@@ -167,6 +167,7 @@ enum ExtractionScripts {
                 }
             } catch(e) {}
 
+            var ldActors = [];
             if (ld) {
                 if (ld.name) out.title = String(ld.name).trim();
                 if (ld.description) out.description = String(ld.description).trim().substring(0, 3000);
@@ -193,6 +194,22 @@ enum ExtractionScripts {
                     }
                     out.genres = gs.join(' / ');
                 }
+                if (ld.image) {
+                    try {
+                        var im = ld.image;
+                        if (typeof im === 'string') out.poster = im;
+                        else if (im && im.url) out.poster = String(im.url);
+                    } catch(e) {}
+                }
+                if (ld.actor) {
+                    var actors = ld.actor;
+                    if (!Array.isArray(actors)) actors = [actors];
+                    for (var ai2 = 0; ai2 < actors.length; ai2++) {
+                        if (actors[ai2] && actors[ai2].name) {
+                            ldActors.push(String(actors[ai2].name).trim());
+                        }
+                    }
+                }
             }
 
             // ---- H1 title ----
@@ -203,43 +220,51 @@ enum ExtractionScripts {
             }
 
             // ---- Poster ----
-            var posterImg = document.querySelector(PROFILE.posterImg);
-            if (posterImg) {
-                var psrc = posterImg.getAttribute('src') || posterImg.getAttribute('data-src') || '';
-                if (psrc && psrc.indexOf('dot.gif') === -1 && psrc.indexOf('noposter') === -1) {
-                    out.poster = norm(psrc);
+            if (!out.poster) {
+                var posterImg = document.querySelector(PROFILE.posterImg);
+                if (posterImg) {
+                    var psrc = posterImg.getAttribute('src') || posterImg.getAttribute('data-src') || '';
+                    if (psrc && psrc.indexOf('dot.gif') === -1 && psrc.indexOf('noposter') === -1) {
+                        out.poster = norm(psrc);
+                    }
                 }
+            } else {
+                out.poster = norm(out.poster);
             }
 
-            // ---- infoSpans ----
-            function findSpanValue(label) {
+            // ---- infoSpans: метки поддерживают и старые, и новые названия ----
+            function findSpanValue(labels) {
                 var spans = document.querySelectorAll(PROFILE.infoSpans);
                 for (var i = 0; i < spans.length; i++) {
                     var b = spans[i].querySelector('b');
                     if (!b) continue;
                     var bText = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
-                    if (bText === label.toLowerCase()) {
-                        return (spans[i].textContent || '').replace(b.textContent, '').trim();
+                    for (var li = 0; li < labels.length; li++) {
+                        if (bText === labels[li].toLowerCase()) {
+                            return (spans[i].textContent || '').replace(b.textContent, '').trim();
+                        }
                     }
                 }
                 return '';
             }
 
-            var vYear = findSpanValue('Год выпуска');
-            if (vYear) {
+            var vYear = findSpanValue(['Год выпуска', 'Вышел в', 'Год']);
+            if (vYear && !out.year) {
                 var ym2 = vYear.match(/\\b(19|20)\\d{2}\\b/);
                 if (ym2) out.year = ym2[0];
             }
-            var vCountry = findSpanValue('Страна');
+            var vCountry = findSpanValue(['Страна', 'Сняли в', 'Страны']);
             if (vCountry) out.country = vCountry;
 
+            // Genres
             var genreSpan = null;
             var sSpans = document.querySelectorAll(PROFILE.infoSpans);
+            var genreLabels = ['жанр', 'жанры'];
             for (var i = 0; i < sSpans.length; i++) {
                 var b = sSpans[i].querySelector('b');
                 if (!b) continue;
                 var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
-                if (bt === 'жанр') { genreSpan = sSpans[i]; break; }
+                if (genreLabels.indexOf(bt) !== -1) { genreSpan = sSpans[i]; break; }
             }
             if (genreSpan) {
                 var gaLinks = genreSpan.querySelectorAll('a');
@@ -251,29 +276,33 @@ enum ExtractionScripts {
                 if (gs2.length) out.genres = gs2.join(' / ');
             }
 
-            function fieldFromFDop(label) {
+            // ---- fDop ----
+            function fieldFromFDop(labels) {
                 var divs = document.querySelectorAll(PROFILE.fDop);
                 for (var i = 0; i < divs.length; i++) {
                     var b = divs[i].querySelector('b');
                     if (!b) continue;
                     var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
-                    if (bt === label.toLowerCase()) {
-                        return (divs[i].textContent || '').replace(b.textContent, '').trim();
+                    for (var li = 0; li < labels.length; li++) {
+                        if (bt === labels[li].toLowerCase()) {
+                            return (divs[i].textContent || '').replace(b.textContent, '').trim();
+                        }
                     }
                 }
                 return '';
             }
-            var q = fieldFromFDop('Качество');
+            var q = fieldFromFDop(['Качество']);
             if (q) out.quality = q;
-            var d = fieldFromFDop('Длительность');
+            var d = fieldFromFDop(['Длительность', 'Время']);
             if (d) out.duration = d;
-            var v = fieldFromFDop('Перевод') || fieldFromFDop('Озвучка');
+            var v = fieldFromFDop(['Перевод', 'Озвучка']);
             if (v) out.voices = v;
-            var s = fieldFromFDop('Сезон');
+            var s = fieldFromFDop(['Сезон']);
             if (s) out.season = s;
-            var le = fieldFromFDop('Последняя серия онлайн') || fieldFromFDop('Последняя серия');
+            var le = fieldFromFDop(['Последняя серия онлайн', 'Последняя серия']);
             if (le) out.lastEpisode = le;
 
+            // ---- Description ----
             if (!out.description) {
                 var dP = document.querySelector(PROFILE.description);
                 if (dP) {
@@ -281,23 +310,52 @@ enum ExtractionScripts {
                 }
             }
 
+            // ---- Actors ----
             var seenA = {};
             var castSpans = document.querySelectorAll(PROFILE.actorsContainer);
             for (var ci = 0; ci < castSpans.length; ci++) {
-                var b = castSpans[ci].querySelector('b');
-                if (!b) continue;
-                var bt = (b.textContent || '').replace(/:\\s*$/, '').trim().toLowerCase();
-                if (bt !== 'актеры') continue;
-                var aLinks = castSpans[ci].querySelectorAll('a');
-                for (var ai = 0; ai < aLinks.length; ai++) {
-                    var name = (aLinks[ai].textContent || '').trim();
-                    var aHref = norm(aLinks[ai].getAttribute('href') || '');
-                    if (!name || seenA[name]) continue;
-                    seenA[name] = true;
-                    out.actors.push({name: name, photo: '', url: aHref});
+                var aEl = castSpans[ci];
+                var name = (aEl.getAttribute('title') || aEl.textContent || '').trim();
+                name = name.replace(/\\s+/g, ' ');
+                if (!name || seenA[name]) continue;
+
+                // Пытаемся вытащить фото из background-image в дочернем элементе
+                var photo = '';
+                try {
+                    var fotoEl = aEl.querySelector('.persons__foto, [class*="photo"], [class*="foto"]');
+                    if (fotoEl) {
+                        var style = fotoEl.getAttribute('style') || '';
+                        var m = style.match(/url\\(['"]?([^'"\\)]+)['"]?\\)/);
+                        if (m && m[1]) photo = norm(m[1]);
+                    }
+                    if (!photo) {
+                        var imgInA = aEl.querySelector('img');
+                        if (imgInA) {
+                            var ii = imgInA.getAttribute('src') || imgInA.getAttribute('data-src') || '';
+                            if (ii && ii.indexOf('dot.gif') === -1) photo = norm(ii);
+                        }
+                    }
+                } catch(e) {}
+
+                seenA[name] = true;
+                out.actors.push({
+                    name: name,
+                    photo: photo,
+                    url: norm(aEl.getAttribute('href') || '')
+                });
+            }
+
+            // Fallback: JSON-LD actor[] — если в HTML актёры не нашлись
+            if (out.actors.length === 0 && ldActors.length > 0) {
+                for (var ldi = 0; ldi < ldActors.length; ldi++) {
+                    var nm = ldActors[ldi];
+                    if (!nm || seenA[nm]) continue;
+                    seenA[nm] = true;
+                    out.actors.push({ name: nm, photo: '', url: '' });
                 }
             }
 
+            // ---- Players ----
             var seenP = {};
             function isPlayerUrl(u) {
                 if (!u) return false;
@@ -309,11 +367,11 @@ enum ExtractionScripts {
             }
 
             var tabs = document.querySelectorAll(PROFILE.playersTabs);
-            for (var t = 0; t < tabs.length; t++) {
-                var src = norm(tabs[t].getAttribute('data-src') || '');
+            for (var t2 = 0; t2 < tabs.length; t2++) {
+                var src = norm(tabs[t2].getAttribute('data-src') || '');
                 if (!src || !isPlayerUrl(src) || seenP[src]) continue;
                 seenP[src] = true;
-                var tabName = (tabs[t].textContent || '').trim() || ('Плеер ' + (out.players.length + 1));
+                var tabName = (tabs[t2].textContent || '').trim() || ('Плеер ' + (out.players.length + 1));
                 out.players.push({name: tabName, url: src});
             }
 
@@ -325,6 +383,7 @@ enum ExtractionScripts {
                 out.players.push({name: 'Плеер ' + (out.players.length + 1), url: src2});
             }
 
+            // ---- Recommendations ----
             var seenR = {};
             var relItems = document.querySelectorAll(PROFILE.related);
             for (var ri = 0; ri < relItems.length; ri++) {
@@ -339,9 +398,12 @@ enum ExtractionScripts {
                     var rsrc = rImg.getAttribute('data-src') || rImg.getAttribute('src') || '';
                     if (rsrc && rsrc.indexOf('dot.gif') === -1) rPoster = norm(rsrc);
                 }
-                var rSpan = rel.querySelector('span.ta-center') || rel.querySelector('span');
-                var rTitle = rSpan ? (rSpan.textContent || '').trim() : '';
-                if (!rTitle) rTitle = (rel.getAttribute('title') || '').trim();
+                // Название: сначала атрибут title, потом текст, минус картинки
+                var rTitle = (rel.getAttribute('title') || '').trim();
+                if (!rTitle) {
+                    rTitle = (rel.textContent || '').trim().replace(/\\s+/g, ' ');
+                }
+                if (!rTitle) continue;
 
                 var rYear = '';
                 var rym = rTitle.match(/\\((\\d{4})\\)/);
