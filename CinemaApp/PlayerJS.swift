@@ -6,16 +6,151 @@ enum PlayerJS {
     if (window.__hunterInstalled) return;
     window.__hunterInstalled = true;
 
-    function reportVideo(u){
+    // ---------------- VIDEO URL HUNTER ----------------
+    var __seenVideo = {};
+    function reportVideo(u, force){
         if(!u) return;
-        var l=String(u).toLowerCase();
-        if(l.indexOf('.mp4')===-1&&l.indexOf('.m3u8')===-1&&l.indexOf('.mkv')===-1&&l.indexOf('.webm')===-1) return;
-        try{window.webkit.messageHandlers.videoURL.postMessage(String(u));}catch(e){}
+        var s = String(u);
+        if(!s) return;
+        var l = s.toLowerCase();
+        if(l.indexOf('blob:')===0 || l.indexOf('data:')===0) return;
+        if(__seenVideo[s]) return;
+
+        var hasVideoExt = l.indexOf('.mp4')!==-1 || l.indexOf('.m3u8')!==-1 ||
+                          l.indexOf('.mkv')!==-1 || l.indexOf('.webm')!==-1 ||
+                          l.indexOf('.mov')!==-1 || l.indexOf('.m4v')!==-1;
+        var isCinemap = l.indexOf('cinemap.cc')!==-1 || l.indexOf('cinemap.')!==-1;
+        if(!hasVideoExt && !(force && isCinemap)) return;
+
+        __seenVideo[s] = 1;
+        try{window.webkit.messageHandlers.videoURL.postMessage(s);}catch(e){}
     }
 
-    try{var _f=window.fetch;window.fetch=function(i){try{var u=(typeof i==='string')?i:(i&&i.url);if(u)reportVideo(u);}catch(e){}return _f.apply(this,arguments);};}catch(e){}
-    try{var _o=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{if(u)reportVideo(u);}catch(e){}return _o.apply(this,arguments);};}catch(e){}
+    function scanExistingVideos(){
+        try{
+            var vids = document.querySelectorAll('video, audio, source');
+            for(var i=0;i<vids.length;i++){
+                var el = vids[i];
+                var s = el.currentSrc || el.src || el.getAttribute('src') || '';
+                if(s) reportVideo(s);
+            }
+        }catch(e){}
+    }
+
+    function installMediaObserver(){
+        try{
+            if(window.__hunterMediaObserver) return;
+            window.__hunterMediaObserver = 1;
+            var obs = new MutationObserver(function(muts){
+                for(var i=0;i<muts.length;i++){
+                    var m = muts[i];
+                    if(m.type==='childList'){
+                        for(var j=0;j<m.addedNodes.length;j++){
+                            var n = m.addedNodes[j];
+                            if(!n || n.nodeType!==1) continue;
+                            try{
+                                if(n.tagName==='VIDEO' || n.tagName==='AUDIO' || n.tagName==='SOURCE'){
+                                    var s = n.src || n.getAttribute('src') || '';
+                                    if(s) reportVideo(s);
+                                }
+                                var inner = n.querySelectorAll ? n.querySelectorAll('video, audio, source') : [];
+                                for(var k=0;k<inner.length;k++){
+                                    var s2 = inner[k].src || inner[k].getAttribute('src') || '';
+                                    if(s2) reportVideo(s2);
+                                }
+                            }catch(e){}
+                        }
+                    } else if(m.type==='attributes'){
+                        try{
+                            var t = m.target;
+                            if(t && (t.tagName==='VIDEO' || t.tagName==='SOURCE' || t.tagName==='AUDIO')){
+                                var s3 = t.src || t.getAttribute('src') || '';
+                                if(s3) reportVideo(s3);
+                            }
+                        }catch(e){}
+                    }
+                }
+            });
+            var root = document.documentElement || document;
+            obs.observe(root, {childList:true, subtree:true, attributes:true, attributeFilter:['src']});
+        }catch(e){}
+    }
+
+    function autoStartPlayback(){
+        try{
+            var vids = document.querySelectorAll('video');
+            for(var i=0;i<vids.length;i++){
+                try{ var p = vids[i].play(); if(p && p.catch) p.catch(function(){}); }catch(e){}
+            }
+        }catch(e){}
+        try{
+            var btns = document.querySelectorAll(
+                '.vjs-big-play-button, .play-button, .player-poster, ' +
+                '[class*="play-btn"], [class*="playButton"], [class*="play_button"], ' +
+                '.poster-overlay, [class*="poster-play"]'
+            );
+            for(var i=0;i<btns.length;i++){
+                try{ btns[i].click(); }catch(e){}
+            }
+        }catch(e){}
+    }
+
+    try{
+        var _f=window.fetch;
+        window.fetch=function(i, init){
+            var url = (typeof i==='string')?i:(i&&i.url);
+            try{ if(url) reportVideo(url); }catch(e){}
+            var p = _f.apply(this, arguments);
+            try{
+                if(p && p.then){
+                    p.then(function(resp){
+                        try{
+                            var ct = '';
+                            try{ ct = (resp.headers && resp.headers.get('content-type')) || ''; }catch(e){}
+                            var lower = ct.toLowerCase();
+                            if(lower.indexOf('video/')!==-1 ||
+                               lower.indexOf('mpegurl')!==-1 ||
+                               lower.indexOf('mpeg-url')!==-1){
+                                reportVideo(resp.url || url, true);
+                            }
+                        }catch(e){}
+                        return resp;
+                    }, function(){});
+                }
+            }catch(e){}
+            return p;
+        };
+    }catch(e){}
+
+    try{
+        var _o=XMLHttpRequest.prototype.open;
+        var _s=XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open=function(m,u){
+            try{ this.__hunter_url = u; if(u) reportVideo(u); }catch(e){}
+            return _o.apply(this, arguments);
+        };
+        XMLHttpRequest.prototype.send=function(){
+            try{
+                var self = this;
+                this.addEventListener('load', function(){
+                    try{
+                        var ct = '';
+                        try{ ct = self.getResponseHeader('content-type') || ''; }catch(e){}
+                        var lower = ct.toLowerCase();
+                        if(lower.indexOf('video/')!==-1 ||
+                           lower.indexOf('mpegurl')!==-1 ||
+                           lower.indexOf('mpeg-url')!==-1){
+                            reportVideo(self.__hunter_url, true);
+                        }
+                    }catch(e){}
+                });
+            }catch(e){}
+            return _s.apply(this, arguments);
+        };
+    }catch(e){}
+
     try{var _c=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{var h=this.href||'';if(h)reportVideo(h);}catch(e){}return _c.apply(this,arguments);};}catch(e){}
+
     try{
     if(!window.__hunterMediaHooked){
     window.__hunterMediaHooked=true;
@@ -30,6 +165,16 @@ enum PlayerJS {
     }
     }catch(e){}
     try{
+    var _srcDesc2=Object.getOwnPropertyDescriptor(HTMLSourceElement.prototype,'src');
+    if(_srcDesc2&&_srcDesc2.set){
+    Object.defineProperty(HTMLSourceElement.prototype,'src',{
+    set:function(v){try{reportVideo(v);}catch(e){}return _srcDesc2.set.call(this,v);},
+    get:_srcDesc2.get,
+    configurable:true
+    });
+    }
+    }catch(e){}
+    try{
     var _origSetAttribute=Element.prototype.setAttribute;
     Element.prototype.setAttribute=function(n,v){
     try{if((n==='src'||n==='data-src')&&v)reportVideo(v);}catch(e){}
@@ -38,6 +183,9 @@ enum PlayerJS {
     }catch(e){}
     }
     }catch(e){}
+
+    scanExistingVideos();
+    installMediaObserver();
 
     // ---------------- UTIL ----------------
     function norm(t){ return String(t||'').replace(/\\s+/g,' ').replace(/^\\s+|\\s+$/g,''); }
@@ -50,7 +198,47 @@ enum PlayerJS {
         return 'voice';
     }
 
-    // Возвращает { season:[...], episode:[...], voice:[...], active:{season:'',episode:'',voice:''} }
+    function addUnique(arr, val){
+        if(!val) return;
+        if(arr.indexOf(val) !== -1) return;
+        arr.push(val);
+    }
+
+    function findDropdownForTitle(title){
+        var parent = title.parentNode;
+        if(parent){
+            var d = parent.querySelector('.playlist-dropdown');
+            if(d) return d;
+        }
+        var sib = title.nextElementSibling;
+        while(sib){
+            if(sib.classList && sib.classList.contains('playlist-dropdown')) return sib;
+            sib = sib.nextElementSibling;
+        }
+        return null;
+    }
+
+    function isNavButton(b){
+        var cls = String((b && b.className) || '');
+        return cls.indexOf('playlist-prev')!==-1 || cls.indexOf('playlist-next')!==-1;
+    }
+
+    function collectButtonsFrom(container, bucket){
+        var btns = container.querySelectorAll('button, a');
+        for(var j=0;j<btns.length;j++){
+            var b = btns[j];
+            if(isNavButton(b)) continue;
+            var btext = norm(b.textContent);
+            if(!btext) continue;
+            if(btext.length > 120) continue;
+            addUnique(bucket.items, btext);
+            var cls = String(b.className || '');
+            if((cls.indexOf('is-active')!==-1 || cls.indexOf('active')!==-1) && !bucket.active){
+                bucket.active = btext;
+            }
+        }
+    }
+
     function collectGroups(){
         var groups = {
             season: { items: [], active: '' },
@@ -58,50 +246,41 @@ enum PlayerJS {
             voice:  { items: [], active: '' }
         };
 
+        // Primary: .playlist-title + .playlist-dropdown
         var titles = document.querySelectorAll('.playlist-title');
         for (var i = 0; i < titles.length; i++) {
             var title = titles[i];
             var titleText = norm(title.textContent);
             if (!titleText) continue;
             var kind = classifyGroup(titleText);
-
-            // Ищем .playlist-dropdown рядом: сначала в родителе, потом siblings
-            var dropdown = null;
-            var parent = title.parentNode;
-            if (parent) {
-                dropdown = parent.querySelector('.playlist-dropdown');
-            }
-            if (!dropdown) {
-                var sib = title.nextElementSibling;
-                while (sib && !(sib.classList && sib.classList.contains('playlist-dropdown'))) {
-                    sib = sib.nextElementSibling;
-                }
-                dropdown = sib;
-            }
-
+            var dropdown = findDropdownForTitle(title);
             var bucket = groups[kind];
-
-            // Заголовок тоже может быть элементом (например, "Сезон 1")
-            if (bucket.items.indexOf(titleText) === -1) {
-                bucket.items.push(titleText);
-            }
-
+            addUnique(bucket.items, titleText);
             if (!dropdown) continue;
+            collectButtonsFrom(dropdown, bucket);
+        }
 
-            var btns = dropdown.querySelectorAll('button');
-            for (var j = 0; j < btns.length; j++) {
-                var b = btns[j];
-                var cls = String(b.className || '');
-                if (cls.indexOf('playlist-prev') !== -1) continue;
-                if (cls.indexOf('playlist-next') !== -1) continue;
-
-                var btext = norm(b.textContent);
-                if (!btext) continue;
-                if (bucket.items.indexOf(btext) === -1) {
-                    bucket.items.push(btext);
-                }
-                if (cls.indexOf('is-active') !== -1 && !bucket.active) {
-                    bucket.active = btext;
+        // Fallback для озвучки (у cinemar бывает отдельный ряд табов)
+        if (groups.voice.items.length <= 1) {
+            var voiceSelectors = [
+                '.translations a', '.translations button',
+                '.translation-list a', '.translation-list button',
+                '.voice-list a', '.voice-list button',
+                '.voices a', '.voices button',
+                '.player-translations a', '.player-translations button',
+                '[data-translation]', '[data-voice]'
+            ];
+            for (var vs = 0; vs < voiceSelectors.length; vs++) {
+                var els = document.querySelectorAll(voiceSelectors[vs]);
+                for (var ei = 0; ei < els.length; ei++) {
+                    var el = els[ei];
+                    var txt = norm(el.textContent);
+                    if (!txt || txt.length > 120) continue;
+                    addUnique(groups.voice.items, txt);
+                    var cls2 = String(el.className || '');
+                    if((cls2.indexOf('is-active')!==-1 || cls2.indexOf('active')!==-1) && !groups.voice.active){
+                        groups.voice.active = txt;
+                    }
                 }
             }
         }
@@ -109,7 +288,6 @@ enum PlayerJS {
         return groups;
     }
 
-    // ---------------- ОТПРАВКА В SWIFT ----------------
     function reportAll(){
         var g = collectGroups();
         try {
@@ -135,76 +313,76 @@ enum PlayerJS {
         } catch(e){}
     }
 
-    // ---------------- КЛИК ----------------
+    // ---------------- CLICK ----------------
     function selectInGroup(text, kind){
         var target = norm(text);
         if (!target) return false;
 
-        // 1. Находим заголовок нужного типа
-        var titles = document.querySelectorAll('.playlist-title');
-        var titleEl = null;
-        for (var i = 0; i < titles.length; i++) {
-            if (classifyGroup(norm(titles[i].textContent)) === kind) {
-                titleEl = titles[i];
-                break;
+        function tryClick(){
+            var titles = document.querySelectorAll('.playlist-title');
+            var titleEl = null;
+            for (var i = 0; i < titles.length; i++) {
+                if (classifyGroup(norm(titles[i].textContent)) === kind) {
+                    titleEl = titles[i];
+                    break;
+                }
             }
-        }
-
-        // 2. Открываем dropdown (клик по заголовку)
-        if (titleEl) {
-            try { titleEl.click(); } catch(e){}
-        }
-
-        // 3. Ищем кнопку с нужным текстом (в dropdown текущей группы)
-        var doClick = function(){
-            var dropdown = null;
             if (titleEl) {
-                var parent = titleEl.parentNode;
-                if (parent) dropdown = parent.querySelector('.playlist-dropdown');
-                if (!dropdown) {
-                    var sib = titleEl.nextElementSibling;
-                    while (sib && !(sib.classList && sib.classList.contains('playlist-dropdown'))) {
-                        sib = sib.nextElementSibling;
+                try { titleEl.click(); } catch(e){}
+                var dropdown = findDropdownForTitle(titleEl);
+                var scope = dropdown || document;
+                var btns = scope.querySelectorAll('button, a');
+                for (var j = 0; j < btns.length; j++) {
+                    var b = btns[j];
+                    if (isNavButton(b)) continue;
+                    if (norm(b.textContent) === target) {
+                        try { b.click(); } catch(e){}
+                        return true;
                     }
-                    dropdown = sib;
                 }
             }
-
-            var scope = dropdown || document;
-            var btns = scope.querySelectorAll('button');
-            for (var j = 0; j < btns.length; j++) {
-                var cls = String(btns[j].className || '');
-                if (cls.indexOf('playlist-prev') !== -1) continue;
-                if (cls.indexOf('playlist-next') !== -1) continue;
-                if (norm(btns[j].textContent) === target) {
-                    try { btns[j].click(); } catch(e){}
-                    return true;
-                }
-            }
-
-            // Фоллбек — глобальный поиск
-            var all = document.querySelectorAll('button');
+            var all = document.querySelectorAll('button, a, [role=button]');
             for (var k = 0; k < all.length; k++) {
-                var cls2 = String(all[k].className || '');
-                if (cls2.indexOf('playlist-prev') !== -1) continue;
-                if (cls2.indexOf('playlist-next') !== -1) continue;
-                if (norm(all[k].textContent) === target) {
-                    try { all[k].click(); } catch(e){}
+                var el = all[k];
+                if (isNavButton(el)) continue;
+                if (norm(el.textContent) === target) {
+                    try { el.click(); } catch(e){}
                     return true;
                 }
             }
             return false;
-        };
+        }
 
-        doClick();
-        setTimeout(doClick, 250);
-        setTimeout(doClick, 600);
+        tryClick();
+        setTimeout(tryClick, 250);
+        setTimeout(tryClick, 700);
         return true;
     }
 
     // ---------------- ДИАГНОСТИКА ----------------
     function collectDiag(){
-        var out = { url: location.href, title: document.title, selects: [], buttons: [], options: [], dataAttrs: [], iframes: [] };
+        var out = {
+            url: location.href,
+            title: document.title,
+            selects: [],
+            buttons: [],
+            options: [],
+            dataAttrs: [],
+            iframes: [],
+            playlistTitles: [],
+            videos: []
+        };
+
+        try{
+            var pts = document.querySelectorAll('.playlist-title');
+            for(var i=0;i<pts.length;i++){
+                out.playlistTitles.push({
+                    text: norm(pts[i].textContent).substring(0, 80),
+                    cls: String(pts[i].className||'').substring(0,120),
+                    kind: classifyGroup(norm(pts[i].textContent))
+                });
+            }
+        }catch(e){}
 
         var selects = document.querySelectorAll('select');
         for (var s = 0; s < selects.length && s < 20; s++) {
@@ -227,7 +405,7 @@ enum PlayerJS {
         }
 
         var btns = document.querySelectorAll('button, [role=button]');
-        for (var i = 0; i < btns.length && i < 120; i++) {
+        for (var i = 0; i < btns.length && i < 200; i++) {
             out.buttons.push({
                 text: norm(btns[i].textContent).substring(0, 60),
                 id: String(btns[i].id || ''),
@@ -268,6 +446,15 @@ enum PlayerJS {
             });
         }
 
+        var vids = document.querySelectorAll('video, source');
+        for (var i = 0; i < vids.length && i < 20; i++) {
+            out.videos.push({
+                tag: vids[i].tagName.toLowerCase(),
+                src: String(vids[i].src || vids[i].getAttribute('src') || '').substring(0, 300),
+                type: String(vids[i].type || '')
+            });
+        }
+
         return out;
     }
 
@@ -298,6 +485,12 @@ enum PlayerJS {
 
     [1500, 3000, 5000, 8000, 12000, 18000].forEach(function(d){
         setTimeout(reportAll, d);
+    });
+    [500, 1500, 3000, 5000, 8000, 12000].forEach(function(d){
+        setTimeout(scanExistingVideos, d);
+    });
+    [900, 2200, 4000, 7000, 11000].forEach(function(d){
+        setTimeout(autoStartPlayback, d);
     });
     })();
     """
