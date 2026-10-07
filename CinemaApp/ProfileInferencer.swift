@@ -22,6 +22,9 @@ final class ProfileInferencer: NSObject {
     private var currentPageLabel: String = ""
     private var enqueuedURLs: Set<String> = []
 
+    // Счётчик попаданий по cardClass: сколько страниц подтвердили кандидата и с каким count
+    private var classVotes: [String: (hits: Int, avgCount: Int, best: SiteProfile)] = [:]
+
     private struct PageResult {
         let label: String
         let url: URL
@@ -29,6 +32,9 @@ final class ProfileInferencer: NSObject {
         let count: Int
     }
     private var pageResults: [PageResult] = []
+
+    private let maxPaginationPerStart = 3   // не больше 3 страниц пагинации на стартовый URL
+    private var paginationDepthByPrefix: [String: Int] = [:]
 
     private override init() {
         super.init()
@@ -54,8 +60,10 @@ final class ProfileInferencer: NSObject {
             self.diagLog = []
             self.pageResults = []
             self.enqueuedURLs = []
+            self.classVotes = [:]
+            self.paginationDepthByPrefix = [:]
 
-            let starts: [String] = ["filmy/", "serialy/", "novinki/"]
+            let starts: [String] = ["filmy/", "serialy/"]
             var urls: [URL] = []
             for path in starts {
                 if let u = URL(string: "https://\(host)/\(path)") {
@@ -69,12 +77,14 @@ final class ProfileInferencer: NSObject {
             self.log("Хост: \(host)")
             self.log("UA: десктопный Safari")
             self.log("Стартовые страницы: \(starts.joined(separator: ", "))")
+            self.log("Лимит пагинации на старт: \(self.maxPaginationPerStart) страницы")
 
             self.loadNextPage()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 120) { [weak self] in
                 guard let self = self, !self.isDone else { return }
-                self.finishFailure(reason: "Таймаут 180 секунд")
+                self.log("⚠️ Таймаут 120с, финализирую по тому, что есть")
+                self.finishAllPages()
             }
         }
     }
@@ -123,6 +133,26 @@ final class ProfileInferencer: NSObject {
         guard !isDone else { return }
         isDone = true
 
+        // Приоритет: консенсус по классам
+        if let (cardClass, vote) = classVotes.max(by: { $0.value.hits < $1.value.hits }) {
+            if vote.hits >= 2 {
+                log("")
+                log("═══ Итог ═══")
+                log("Победитель по консенсусу: .\(cardClass)")
+                log("Попаданий: \(vote.hits), среднее карточек: \(vote.avgCount)")
+                log("Профиль:")
+                log("  card   = \(vote.best.catalogCard)")
+                log("  title  = \(vote.best.catalogTitleLink)")
+                log("  poster = \(vote.best.catalogPosterImg)")
+                log("  rating = \(vote.best.catalogRating)")
+                let cb = completion
+                completion = nil
+                cb?(InferenceResult(host: host, profile: vote.best, movieCount: vote.avgCount, log: logString()))
+                return
+            }
+        }
+
+        // Fallback: лучший по одной странице
         guard let best = pageResults.max(by: { $0.count < $1.count }) else {
             log("❌ Ни одна страница не дала кандидатов")
             let cb = completion
@@ -176,30 +206,26 @@ final class ProfileInferencer: NSObject {
 
             self.log("  Заголовок: \(pageTitle)")
             self.log("  Ссылок /NNN-slug.html: \(movieLinksCount)")
-            self.log("  Ссылок пагинации: \(paginationLinks.count)")
-            if !paginationLinks.isEmpty {
-                let sample = paginationLinks.prefix(6).joined(separator: ", ")
-                self.log("  Примеры: \(sample)")
-            }
 
-            // 1) Добавляем найденные ссылки пагинации
-            for href in paginationLinks {
-                guard let u = URL(string: href, relativeTo: currentURL)?.absoluteURL else { continue }
-                self.enqueue(u, reason: "пагинация")
-            }
+            // ---- Ограниченная пагинация: не больше N страниц на один стартовый префикс ----
+            // Определяем префикс (filmy/ или serialy/)
+            let prefix: String
+            if currentURL.path.hasPrefix("/filmy/") { prefix = "filmy/" }
+            else if currentURL.path.hasPrefix("/serialy/") { prefix = "serialy/" }
+            else { prefix = "other/" }
 
-            // 2) Fallback: если это top-level каталог и ссылки пагинации не нашлись,
-            //    генерируем /page/2/..6/ вручную.
-            let path = currentURL.path
-            let isTopLevelCatalog = (path == "/filmy/" || path == "/serialy/" || path == "/novinki/")
-            if isTopLevelCatalog && paginationLinks.isEmpty {
-                self.log("  ⚠️ Ссылок пагинации нет — генерирую /page/2/../page/6/")
-                let base = path.hasSuffix("/") ? String(path.dropLast()) : path  // /filmy
-                for n in 2...6 {
-                    if let u = URL(string: "https://\(self.host)\(base)/page/\(n)/") {
-                        self.enqueue(u, reason: "page/\(n)/")
-                    }
+            let depth = paginationDepthByPrefix[prefix] ?? 0
+            if !paginationLinks.isEmpty && depth < self.maxPaginationPerStart {
+                // Берём ТОЛЬКО первый не-текущий номер пагинации (обычно «следующая»)
+                let nextPages = paginationLinks.prefix(self.maxPaginationPerStart)
+                self.log("  Ссылок пагинации: \(paginationLinks.count) — беру первые \(nextPages.count)")
+                for href in nextPages {
+                    guard let u = URL(string: href, relativeTo: currentURL)?.absoluteURL else { continue }
+                    self.enqueue(u, reason: "пагинация")
+                    self.paginationDepthByPrefix[prefix] = (self.paginationDepthByPrefix[prefix] ?? 0) + 1
                 }
+            } else if !paginationLinks.isEmpty {
+                self.log("  Пагинация: лимит для \(prefix) исчерпан (\(depth))")
             }
 
             guard let candidates = dict["candidates"] as? [[String: Any]], !candidates.isEmpty else {
@@ -228,9 +254,20 @@ final class ProfileInferencer: NSObject {
                         profile: b.profile,
                         count: b.count
                     ))
-                    // Ранний выход: если на первой странице каталога поймали >= 50 — не идём дальше
-                    if b.count >= 50 {
-                        self.log("  Ранний выход (>= 50 карточек)")
+
+                    // ---- Консенсус: обновляем счётчик по классу ----
+                    let key = b.cardClass
+                    if let existing = self.classVotes[key] {
+                        let newHits = existing.hits + 1
+                        let newAvg = (existing.avgCount * existing.hits + b.count) / newHits
+                        self.classVotes[key] = (hits: newHits, avgCount: newAvg, best: existing.best)
+                    } else {
+                        self.classVotes[key] = (hits: 1, avgCount: b.count, best: b.profile)
+                    }
+
+                    // ---- Ранний выход по консенсусу: если этот класс уже попал 3 раза с ≥5 ----
+                    if let v = self.classVotes[key], v.hits >= 3 && v.avgCount >= 5 {
+                        self.log("  ⭐ Класс .\(key) подтверждён \(v.hits) раза, avg=\(v.avgCount). Финализация.")
                         self.finishAllPages()
                         return
                     }
@@ -276,6 +313,8 @@ final class ProfileInferencer: NSObject {
         var p = SiteProfile.default
 
         if let card = cand["cardClass"] as? String, !card.isEmpty {
+            // ВАЖНО: класс НЕ нормализуем по регистру — сайт может использовать .shortstory,
+            // а не .shortStory. Берём как есть.
             p.catalogCard = ".\(card)"
         }
         if let title = cand["titleSelector"] as? String, isRealSelector(title) {
@@ -307,9 +346,9 @@ final class ProfileInferencer: NSObject {
       paginationLinks: []
     };
 
-    // ---- Сбор ссылок на фильмы ----
-    var movieLinks = [];
     var allLinks = document.querySelectorAll('a[href]');
+
+    var movieLinks = [];
     for (var i = 0; i < allLinks.length && i < 10000; i++) {
       var h = allLinks[i].getAttribute('href') || '';
       if (/\\d+-[a-z0-9\\-]+\\.html/i.test(h)) {
@@ -318,7 +357,7 @@ final class ProfileInferencer: NSObject {
     }
     out.movieLinksCount = movieLinks.length;
 
-    // ---- Сбор ссылок пагинации ----
+    // ---- Пагинация ----
     var pagSet = {};
     function addPag(href) {
       if (!href) return;
@@ -327,12 +366,11 @@ final class ProfileInferencer: NSObject {
       pagSet[href] = true;
     }
 
-    // 1) Ссылки в контейнерах пагинации
     try {
       var containers = document.querySelectorAll(
         '.navigation, .pagination, .pagenav, .pages, .navig, ' +
         '.pageNavigation, .module-pagination, .pagi, .pager, ' +
-        '[class*="pagination"], [class*="pagenav"], [class*="page-nav"]'
+        '[class*="pagination"], [class*="pagenav"], [class*="page-nav"], [class*="pagi"]'
       );
       for (var c = 0; c < containers.length; c++) {
         var ls = containers[c].querySelectorAll('a[href]');
@@ -342,21 +380,20 @@ final class ProfileInferencer: NSObject {
       }
     } catch(e) {}
 
-    // 2) Ссылки с /page/ или ?page=
     try {
       for (var i = 0; i < allLinks.length; i++) {
         var h = allLinks[i].getAttribute('href') || '';
-        if (h.indexOf('/page/') !== -1 || h.indexOf('?page=') !== -1 || h.indexOf('&page=') !== -1) {
+        // /page/N/ или ?page=N
+        if (/\\/page\\/\\d+\\/?/.test(h) || h.indexOf('?page=') !== -1 || h.indexOf('&page=') !== -1) {
           addPag(h);
         }
       }
     } catch(e) {}
 
-    // 3) Ссылки с числовым текстом (2, 3, 4, ...)
     try {
       for (var i = 0; i < allLinks.length; i++) {
         var t = (allLinks[i].textContent || '').trim();
-        if (/^\\d{1,3}$/.test(t)) {
+        if (/^\\d{1,4}$/.test(t)) {
           addPag(allLinks[i].getAttribute('href'));
         }
       }
